@@ -1,0 +1,9 @@
+fastapi>=0.104.1
+uvicorn>=0.24.0
+pillow>=10.1.0
+pydantic>=2.4.2
+transformers>=4.35.0
+torch>=2.1.0
+python-multipart>=0.0.6
+requests>=2.31.0
+# Optional: llama-cpp-python>=0.2.26 for local GGUF model execution

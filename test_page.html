@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PrivacyScreen Agent - Interactive Test Harness</title>
+  <style>
+    :root {
+      --bg: #0b0f19;
+      --card: #151d2f;
+      --card-border: rgba(255, 255, 255, 0.08);
+      --primary: #6366f1;
+      --cyan: #38bdf8;
+      --emerald: #10b981;
+      --rose: #f43f5e;
+      --text: #f8fafc;
+      --text-dim: #94a3b8;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      padding: 30px 20px;
+      line-height: 1.5;
+    }
+    .wrapper {
+      max-width: 900px;
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+    }
+    header {
+      border-bottom: 1px solid var(--card-border);
+      padding-bottom: 16px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    h1 { font-size: 24px; font-weight: 700; color: #fff; display: flex; align-items: center; gap: 10px; }
+    .badge {
+      background: rgba(99, 102, 241, 0.15);
+      border: 1px solid var(--primary);
+      color: #c7d2fe;
+      padding: 4px 10px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 20px;
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--card-border);
+      border-radius: 12px;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      position: relative;
+    }
+    .card-title {
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--cyan);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .rule-tag {
+      font-size: 10px;
+      text-transform: uppercase;
+      background: rgba(255, 255, 255, 0.05);
+      padding: 2px 6px;
+      border-radius: 4px;
+      color: var(--text-dim);
+    }
+    .avatar-wrapper {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+    /* Simulated face / avatar */
+    .avatar-img {
+      width: 72px;
+      height: 72px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #f59e0b, #ec4899);
+      border: 2px solid rgba(255, 255, 255, 0.2);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 36px;
+      overflow: hidden;
+      position: relative;
+    }
+    .field-group {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    label { font-size: 12px; color: var(--text-dim); font-weight: 500; }
+    input[type="text"], input[type="password"], input[type="email"] {
+      background: #090d16;
+      border: 1px solid var(--card-border);
+      border-radius: 6px;
+      padding: 10px 12px;
+      color: #fff;
+      font-size: 14px;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    input:focus { border-color: var(--cyan); }
+    .btn {
+      background: linear-gradient(135deg, #4f46e5, #0284c7);
+      color: #fff;
+      border: none;
+      padding: 10px 16px;
+      border-radius: 6px;
+      font-weight: 600;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      font-size: 13px;
+      transition: transform 0.15s, filter 0.15s;
+    }
+    .btn:hover { filter: brightness(1.1); transform: translateY(-1px); }
+    .btn:active { transform: translateY(0); }
+    .btn-secondary {
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid var(--card-border);
+    }
+    .pii-display {
+      background: #090d16;
+      border: 1px dashed rgba(244, 63, 94, 0.4);
+      padding: 10px 12px;
+      border-radius: 6px;
+      font-family: monospace;
+      font-size: 13px;
+      color: #fca5a5;
+    }
+    .live-event-log {
+      background: #090d16;
+      border: 1px solid var(--card-border);
+      border-radius: 8px;
+      padding: 14px;
+      font-family: monospace;
+      font-size: 12px;
+      max-height: 180px;
+      overflow-y: auto;
+    }
+    .log-item {
+      padding: 4px 0;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+      color: var(--text-dim);
+    }
+    .log-item.highlight { color: var(--emerald); font-weight: 600; }
+  </style>
+</head>
+<body>
+  <div class="wrapper">
+    <header>
+      <div>
+        <h1>🛡️ PrivacyScreen Test Harness</h1>
+        <p style="color: var(--text-dim); font-size: 13px; margin-top: 4px;">
+          Use this page to verify 100% PII redaction and autonomous browser action execution.
+        </p>
+      </div>
+      <span class="badge">Verification Environment</span>
+    </header>
+
+    <div class="grid">
+      <!-- Section 1: Face Detection & Avatar -->
+      <div class="card" id="profile-card">
+        <div class="card-title">
+          <span>1. Profile & Avatar</span>
+          <span class="rule-tag">Target: Blur</span>
+        </div>
+        <div class="avatar-wrapper">
+          <div class="avatar-img" class="profile-pic" id="user-avatar" title="Sample Face Profile">
+            <!-- Simulated human avatar -->
+            <span>👤</span>
+          </div>
+          <div>
+            <div style="font-weight: 600;">Dr. Evelyn Reed</div>
+            <div style="font-size: 12px; color: var(--text-dim);">Chief Security Researcher</div>
+            <div style="font-size: 11px; color: var(--cyan); margin-top: 4px;">Avatar image element</div>
+          </div>
+        </div>
+        <p style="font-size: 12px; color: var(--text-dim);">
+          The extension's privacy filter detects portraits/avatars and applies Gaussian mosaic blur on canvas.
+        </p>
+      </div>
+
+      <!-- Section 2: Account Login & Password Field -->
+      <div class="card" id="login-card">
+        <div class="card-title">
+          <span>2. Authentication Form</span>
+          <span class="rule-tag">Target: Blackout</span>
+        </div>
+        <form id="mockLoginForm" onsubmit="event.preventDefault(); recordEvent('Submitted Login Form with password field.');">
+          <div class="field-group">
+            <label for="login-email">Account ID / Username</label>
+            <input type="text" id="login-email" value="alex.sec@enterprise.com" />
+          </div>
+          <div class="field-group" style="margin-top: 10px;">
+            <label for="password">Confidential Password</label>
+            <input type="password" id="password" value="SuperSecretP@ssword2026!" autocomplete="current-password" />
+          </div>
+          <button type="submit" id="login-btn" class="btn" style="margin-top: 14px; width: 100%;">
+            <span>🔐 Log In to Account</span>
+          </button>
+        </form>
+      </div>
+
+      <!-- Section 3: Sensitive Contact PII -->
+      <div class="card" id="contact-card">
+        <div class="card-title">
+          <span>3. Contact Information</span>
+          <span class="rule-tag">Target: Mask</span>
+        </div>
+        <div class="field-group">
+          <label>Confidential Email Address</label>
+          <div class="pii-display" id="test-email-display">sarah.connor@sky-defense.org</div>
+        </div>
+        <div class="field-group">
+          <label>Direct Telephone Number</label>
+          <div class="pii-display" id="test-phone-display">+1 (555) 234-5678</div>
+        </div>
+        <button class="btn btn-secondary" id="contact-support-btn" onclick="recordEvent('Clicked Contact Support Button')">
+          <span>📞 Request Callback</span>
+        </button>
+      </div>
+
+      <!-- Section 4: Financial / Credit Card -->
+      <div class="card" id="billing-card">
+        <div class="card-title">
+          <span>4. Billing Information</span>
+          <span class="rule-tag">Target: Partial Mask</span>
+        </div>
+        <div class="field-group">
+          <label>Visa Corporate Card Number (Luhn Valid)</label>
+          <div class="pii-display" id="test-card-display">4532 0158 9234 8928</div>
+        </div>
+        <div class="field-group">
+          <label for="promo-code">Promo or Voucher Code</label>
+          <input type="text" id="promo-code" placeholder="Enter coupon..." />
+        </div>
+        <button class="btn" id="checkout-btn" onclick="recordEvent('Clicked Checkout Button')">
+          <span>💳 Process Secure Payment</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Live Event Log & Action Tracker -->
+    <div class="card">
+      <div class="card-title">
+        <span>Interactive Agent Activity Console</span>
+        <button class="btn btn-secondary" style="padding: 4px 10px; font-size: 11px;" onclick="clearLogs()">Clear</button>
+      </div>
+      <div class="live-event-log" id="eventLog">
+        <div class="log-item highlight">✓ Test harness ready. Activate extension popup to interact with this page.</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    function recordEvent(message) {
+      const log = document.getElementById('eventLog');
+      const item = document.createElement('div');
+      const time = new Date().toLocaleTimeString();
+      item.className = 'log-item highlight';
+      item.textContent = `[${time}] ${message}`;
+      log.prepend(item);
+    }
+
+    function clearLogs() {
+      const log = document.getElementById('eventLog');
+      log.innerHTML = '<div class="log-item">Console cleared.</div>';
+    }
+
+    // Attach click listeners to all buttons for instant feedback
+    document.querySelectorAll('button').forEach(btn => {
+      btn.addEventListener('click', () => {
+        btn.style.transform = 'scale(0.97)';
+        setTimeout(() => btn.style.transform = '', 150);
+      });
+    });
+  </script>
+</body>
+</html>

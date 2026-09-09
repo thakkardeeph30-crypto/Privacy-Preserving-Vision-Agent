@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PrivacyScreen Agent</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="container">
+    <!-- Header -->
+    <header class="app-header">
+      <div class="brand">
+        <div class="logo-wrapper">
+          <span class="logo-icon">🛡️</span>
+          <div class="pulse-ring"></div>
+        </div>
+        <div class="brand-text">
+          <h1>PrivacyScreen</h1>
+          <span class="version-tag">Agent v1.0</span>
+        </div>
+      </div>
+      <div class="server-badge" id="serverBadge" title="FastAPI Vision Backend Status">
+        <span class="badge-dot"></span>
+        <span class="badge-text" id="serverStatusText">Connecting...</span>
+      </div>
+    </header>
+
+    <!-- Main Status Banner -->
+    <div class="status-card">
+      <div class="status-indicator">
+        <span class="status-label">Agent State</span>
+        <div class="status-value" id="status">Inactive</div>
+      </div>
+      <button id="toggleBtn" class="primary-btn toggle-btn">
+        <span class="btn-icon">⚡</span>
+        <span class="btn-text">Activate</span>
+      </button>
+    </div>
+
+    <!-- Agent Action Task Bar -->
+    <section class="task-section">
+      <div class="section-label">Vision Agent Task</div>
+      <div class="task-input-wrapper">
+        <input 
+          type="text" 
+          id="taskInput" 
+          placeholder="e.g., Click the login button..." 
+          value="Click the login button"
+          autocomplete="off"
+        />
+        <button id="runTaskBtn" class="run-btn" title="Analyze Screen & Run Task">
+          <span class="run-btn-icon">🚀</span>
+          <span>Run</span>
+        </button>
+      </div>
+      <div class="quick-chips">
+        <button class="chip-btn" data-task="Click the login button">Click Login</button>
+        <button class="chip-btn" data-task="Fill in the contact email field">Fill Email</button>
+        <button class="chip-btn" data-task="Scroll down to reviews">Scroll Down</button>
+      </div>
+    </section>
+
+    <!-- Privacy Filters & Rules -->
+    <div class="settings">
+      <div class="settings-header">
+        <h3>Privacy Redaction Filters</h3>
+        <span class="privacy-badge">100% On-Device</span>
+      </div>
+      <div class="toggles-grid">
+        <label class="toggle-card">
+          <input type="checkbox" checked id="blurFaces">
+          <div class="toggle-content">
+            <span class="toggle-title">👤 Blur Faces</span>
+            <span class="toggle-desc">Mosaic blur on avatars & portraits</span>
+          </div>
+          <span class="switch"></span>
+        </label>
+
+        <label class="toggle-card">
+          <input type="checkbox" checked id="maskPasswords">
+          <div class="toggle-content">
+            <span class="toggle-title">🔒 Mask Passwords</span>
+            <span class="toggle-desc">Blackout password & secret fields</span>
+          </div>
+          <span class="switch"></span>
+        </label>
+
+        <label class="toggle-card">
+          <input type="checkbox" checked id="maskPII">
+          <div class="toggle-content">
+            <span class="toggle-title">💳 Mask PII & Cards</span>
+            <span class="toggle-desc">Redact emails, phones & credit cards</span>
+          </div>
+          <span class="switch"></span>
+        </label>
+      </div>
+    </div>
+
+    <!-- Telemetry & Performance Stats -->
+    <div class="stats">
+      <div class="stat-box">
+        <span class="stat-name">Local ViT</span>
+        <span class="stat-value" id="modelStatus">Loading...</span>
+      </div>
+      <div class="stat-box">
+        <span class="stat-name">Frames Processed</span>
+        <span class="stat-value highlight" id="frameCount">0</span>
+      </div>
+      <div class="stat-box">
+        <span class="stat-name">PII Redacted</span>
+        <span class="stat-value alert" id="redactedCount">0</span>
+      </div>
+      <div class="stat-box">
+        <span class="stat-name">Latency</span>
+        <span class="stat-value" id="latencyStat">0ms</span>
+      </div>
+    </div>
+
+    <!-- Feedback & Action Log -->
+    <div class="log-tray" id="logTray" style="display: none;">
+      <div class="log-title">Latest Execution</div>
+      <div class="log-message" id="logMessage">Ready.</div>
+    </div>
+
+    <!-- Footer Controls -->
+    <footer class="app-footer">
+      <button id="maskDomBtn" class="secondary-btn" title="Mask PII in current page DOM">
+        <span>👁️ Redact Page DOM</span>
+      </button>
+      <button id="settingsBtn" class="secondary-btn icon-btn">
+        <span>⚙️ Advanced</span>
+      </button>
+    </footer>
+
+    <!-- Advanced Settings Modal (Collapsible) -->
+    <div class="modal-backdrop" id="advancedModal" style="display: none;">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h4>Advanced Settings</h4>
+          <button id="closeModalBtn" class="close-btn">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-group">
+            <label for="serverUrlInput">Vision Server Endpoint</label>
+            <input type="text" id="serverUrlInput" value="http://127.0.0.1:8000" />
+            <small>Local FastAPI server running BLIP & LLaMA / heuristic engine.</small>
+          </div>
+          <div class="form-group">
+            <label>Privacy Enforcement Level</label>
+            <div class="info-pill">Strict Zero-Trust (No un-redacted pixels leave device)</div>
+          </div>
+          <div class="modal-actions">
+            <button id="saveAdvancedBtn" class="primary-btn full-width">Save Preferences</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

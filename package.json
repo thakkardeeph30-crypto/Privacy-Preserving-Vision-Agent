@@ -1,0 +1,30 @@
+{
+  "name": "privacy-screen-agent",
+  "version": "1.0.0",
+  "description": "Privacy-preserving autonomous vision agent Chrome Extension (Manifest V3) and FastAPI backend.",
+  "main": "extension/background.js",
+  "type": "module",
+  "scripts": {
+    "build": "node build.js",
+    "lint": "echo 'Validating manifest and scripts...' && node -e \"JSON.parse(require('fs').readFileSync('extension/manifest.json'))\"",
+    "start:server": "uvicorn server.app:app --host 0.0.0.0 --port 8000 --reload",
+    "test": "node test_privacy.js && python3 server/test_server.py"
+  },
+  "keywords": [
+    "chrome-extension",
+    "manifest-v3",
+    "ai-agent",
+    "computer-vision",
+    "privacy",
+    "pii-redaction",
+    "transformers-js"
+  ],
+  "author": "Antigravity",
+  "license": "MIT",
+  "dependencies": {
+    "@xenova/transformers": "^2.17.2"
+  },
+  "devDependencies": {
+    "esbuild": "^0.20.2"
+  }
+}
