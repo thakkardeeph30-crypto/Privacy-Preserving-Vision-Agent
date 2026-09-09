@@ -201,21 +201,29 @@
       <!-- Section 2: Account Login & Password Field -->
       <div class="card" id="login-card">
         <div class="card-title">
-          <span>2. Authentication Form</span>
-          <span class="rule-tag">Target: Blackout</span>
+          <span>2. Authentication & Local Vault</span>
+          <span class="rule-tag">Auto-Save & Autofill</span>
         </div>
-        <form id="mockLoginForm" onsubmit="event.preventDefault(); recordEvent('Submitted Login Form with password field.');">
+        <form id="mockLoginForm" onsubmit="event.preventDefault(); recordEvent('Submitted Login Form: Credentials captured for local vault.');">
           <div class="field-group">
             <label for="login-email">Account ID / Username</label>
-            <input type="text" id="login-email" value="alex.sec@enterprise.com" />
+            <input type="text" id="login-email" name="username" value="alex.sec@enterprise.com" autocomplete="username" />
           </div>
           <div class="field-group" style="margin-top: 10px;">
             <label for="password">Confidential Password</label>
-            <input type="password" id="password" value="SuperSecretP@ssword2026!" autocomplete="current-password" />
+            <input type="password" id="password" name="password" value="SuperSecretP@ssword2026!" autocomplete="current-password" />
           </div>
-          <button type="submit" id="login-btn" class="btn" style="margin-top: 14px; width: 100%;">
-            <span>🔐 Log In to Account</span>
-          </button>
+          <div style="display: flex; gap: 8px; margin-top: 14px;">
+            <button type="submit" id="login-btn" class="btn" style="flex: 2;">
+              <span>🔐 Log In to Account</span>
+            </button>
+            <button type="button" class="btn btn-secondary" style="flex: 1;" onclick="document.getElementById('login-email').value=''; document.getElementById('password').value=''; recordEvent('Cleared login fields. Ready to test Auto-Login from local vault.');">
+              <span>Clear</span>
+            </button>
+          </div>
+          <p style="font-size: 11px; color: var(--text-dim); margin-top: 6px;">
+            💡 <b>Vault Test</b>: Click <i>Log In</i> to trigger the save prompt. Then click <i>Clear</i> and use the popup's <b>Autofill & Login</b> button.
+          </p>
         </form>
       </div>
 

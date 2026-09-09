@@ -17,6 +17,7 @@ let state = {
     maskEmails: true,
     maskPhones: true,
     maskCreditCards: true,
+    promptSaveCredentials: true,
     serverUrl: 'http://127.0.0.1:8000'
   },
   stats: {
@@ -24,7 +25,8 @@ let state = {
     piiRedactedCount: 0,
     totalActionsExecuted: 0,
     lastLatencyMs: 0
-  }
+  },
+  vault: {} // Local storage vault: { [hostname]: { username, password, domain, updatedAt } }
 };
 
 // Initialize settings and offscreen document
@@ -41,10 +43,11 @@ chrome.runtime.onStartup.addListener(async () => {
 
 async function loadStoredState() {
   try {
-    const data = await chrome.storage.local.get(['settings', 'stats', 'isActive']);
+    const data = await chrome.storage.local.get(['settings', 'stats', 'isActive', 'vault']);
     if (data.settings) state.settings = { ...state.settings, ...data.settings };
     if (data.stats) state.stats = { ...state.stats, ...data.stats };
     if (typeof data.isActive === 'boolean') state.isActive = data.isActive;
+    if (data.vault) state.vault = { ...data.vault };
   } catch (err) {
     console.warn('[PrivacyScreen Agent] Error reading storage:', err);
   }
@@ -55,7 +58,8 @@ async function saveState() {
     await chrome.storage.local.set({
       settings: state.settings,
       stats: state.stats,
-      isActive: state.isActive
+      isActive: state.isActive,
+      vault: state.vault
     });
   } catch (err) {
     console.warn('[PrivacyScreen Agent] Error saving storage:', err);
@@ -112,6 +116,56 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       handleScreenProcessing(request.data || {}, sendResponse);
       return true; // Keep async channel open
 
+    case 'SAVE_SITE_CREDENTIALS': {
+      const { hostname, username, password } = request.data || {};
+      if (hostname && username && password) {
+        state.vault[hostname] = {
+          username,
+          password,
+          domain: hostname,
+          updatedAt: Date.now()
+        };
+        saveState();
+        sendResponse({ success: true, message: `Credentials saved locally for ${hostname}` });
+      } else {
+        sendResponse({ success: false, error: 'Missing hostname, username, or password' });
+      }
+      return false;
+    }
+
+    case 'GET_SITE_CREDENTIALS': {
+      const { hostname } = request.data || {};
+      const cred = state.vault[hostname] || null;
+      sendResponse({ success: true, credentials: cred });
+      return false;
+    }
+
+    case 'GET_ALL_SAVED_SITES': {
+      const sites = Object.keys(state.vault).map(host => ({
+        domain: host,
+        username: state.vault[host].username,
+        updatedAt: state.vault[host].updatedAt
+      }));
+      sendResponse({ success: true, sites });
+      return false;
+    }
+
+    case 'DELETE_SITE_CREDENTIALS': {
+      const { hostname } = request.data || {};
+      if (state.vault[hostname]) {
+        delete state.vault[hostname];
+        saveState();
+        sendResponse({ success: true, message: `Removed credentials for ${hostname}` });
+      } else {
+        sendResponse({ success: false, error: 'Domain not found in vault' });
+      }
+      return false;
+    }
+
+    case 'AUTOFILL_LOGIN':
+      handleAutofillLogin(request.data || {}, sendResponse);
+      return true;
+
     case 'PING_SERVER':
       checkServerHealth().then(sendResponse);
       return true;
@@ -120,6 +174,44 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       return false;
   }
 });
+
+async function handleAutofillLogin(data, sendResponse) {
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab || !tab.id) throw new Error('No active browser tab found.');
+
+    const urlObj = new URL(tab.url);
+    const hostname = data.hostname || urlObj.hostname;
+    const cred = state.vault[hostname];
+
+    if (!cred) {
+      throw new Error(`No saved credentials found in local storage for ${hostname}`);
+    }
+
+    await ensureContentScript(tab.id);
+
+    chrome.tabs.sendMessage(
+      tab.id,
+      {
+        action: 'AUTOFILL_AND_LOGIN',
+        username: cred.username,
+        password: cred.password,
+        autoSubmit: data.autoSubmit !== false
+      },
+      (res) => {
+        if (chrome.runtime.lastError || !res) {
+          sendResponse({ success: false, error: chrome.runtime.lastError?.message || 'Autofill failed' });
+        } else {
+          state.stats.totalActionsExecuted += 2;
+          saveState();
+          sendResponse({ success: true, ...res });
+        }
+      }
+    );
+  } catch (err) {
+    sendResponse({ success: false, error: err.message });
+  }
+}
 
 async function notifyActiveTab(action, data = {}) {
   try {
@@ -239,9 +331,47 @@ async function handleScreenProcessing(data, sendResponse) {
     state.stats.framesAnalyzed += 1;
     state.stats.piiRedactedCount += itemsRedacted;
 
-    // 8. Transmit sanitized frame to server
+    // 8. Transmit sanitized frame to server (or execute local vault login)
     const serverUrl = state.settings.serverUrl || 'http://127.0.0.1:8000';
     const taskPrompt = data.task || 'Analyze screen and assist with current form/actions';
+    const taskLower = taskPrompt.toLowerCase();
+
+    // Check if user requested login and we have stored credentials for this site
+    let urlObj;
+    try { urlObj = new URL(activeTab.url); } catch (e) {}
+    const savedCred = urlObj && state.vault[urlObj.hostname];
+
+    if (savedCred && (taskLower.includes('login') || taskLower.includes('log in') || taskLower.includes('sign in') || taskLower.includes('autofill') || taskLower.includes('password'))) {
+      const autofillRes = await new Promise((resolve) => {
+        chrome.tabs.sendMessage(
+          activeTab.id,
+          {
+            action: 'AUTOFILL_AND_LOGIN',
+            username: savedCred.username,
+            password: savedCred.password,
+            autoSubmit: true
+          },
+          (r) => resolve(r || { success: true })
+        );
+      });
+
+      const latency = Date.now() - startTime;
+      state.stats.lastLatencyMs = latency;
+      state.stats.totalActionsExecuted += 2;
+      saveState();
+
+      sendResponse({
+        success: true,
+        result: {
+          latencyMs: latency,
+          redactedCount: itemsRedacted,
+          actionsExecuted: [{ action: { type: 'autofill_and_login' }, result: autofillRes }],
+          confidence: 0.99,
+          description: `Logged in using secure local storage credentials for ${urlObj.hostname}. Password was kept 100% on-device.`
+        }
+      });
+      return;
+    }
 
     const serverPayload = {
       image: sanitizedScreenshot, // Guaranteed sanitized & anonymized

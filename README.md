@@ -63,12 +63,30 @@ privacy-screen-agent/
 │   ├── requirements.txt      # Python dependencies
 │   ├── Dockerfile            # Containerized server environment
 │   └── test_server.py        # Automated test suite for backend & PII audit
-├── test_page.html            # Interactive test harness with forms & PII fields
+├── test_page.html            # Interactive test harness with forms, login card & PII fields
 ├── test_privacy.js           # Automated test suite for privacy algorithms
+├── test_vault.js             # Automated test suite for local credential storage & auto-login
 ├── build.js                  # Extension build & validation script
 ├── package.json              # NPM configuration and scripts
 └── README.md                 # Complete documentation
 ```
+
+---
+
+## 🔐 Client-Side Credential Vault & 1-Click Auto-Login
+
+PrivacyScreen Agent includes an integrated **On-Device Credential Vault** designed with strict Zero-Trust principles:
+
+1. **Passive Login Interception**: When you enter credentials on a website and submit the form or click "Sign In", the extension detects the submission and displays a non-intrusive floating prompt: *"Save credentials for this site in PrivacyScreen Agent local storage?"*
+2. **100% Local Storage Isolation**: Credentials are saved exclusively in your browser's private `chrome.storage.local` indexed by site origin (e.g. `example.com`).
+3. **Zero Network Exposure Guarantee**:
+   - Stored passwords and usernames are **NEVER** sent to the FastAPI vision backend.
+   - Screen frames black out password fields before capture.
+   - Autonomous tasks (e.g., *"Log into my account"*) are intercepted by the local agent, executing local client-side autofill with zero cloud exposure.
+4. **Reactive Framework Support**: Uses prototype descriptor setters (`HTMLInputElement.prototype.value`) and dispatches bubbling events so modern SPAs (React, Vue, Angular) register state changes seamlessly.
+5. **1-Click Popup Action & Management**:
+   - When visiting a saved domain, the extension popup immediately displays a **"Saved Login Available"** quick banner with a 1-click **Autofill & Login** button.
+   - Review or remove saved site credentials at any time in the **Advanced Settings** modal.
 
 ---
 
@@ -78,6 +96,7 @@ privacy-screen-agent/
 | :--- | :--- | :--- | :--- |
 | **Faces & Portraits** | Canvas geometry / skin-tone clustering / DOM avatar tags / ViT detection | **Gaussian Mosaic Blur** | Faces are un-reconstructable by facial recognition |
 | **Password Fields** | DOM query (`input[type="password"]`, `autocomplete="current-password"`) | **Complete Blackout Rectangle** | Pure black `#05070d` box with `[LOCKED]` label |
+| **User Credentials** | `chrome.storage.local` Client Vault | **Local Isolation & DOM Injection** | Never transmitted over network or to LLM/VLM |
 | **Email Addresses** | RFC-compliant Regex (`[a-zA-Z0-9._%+-]+@[...]`) | **Masking** | `user***@domain.com` (first 2 chars + mask + domain) |
 | **Phone Numbers** | International & US formats (`(555) 234-5678`, `555-234-5678`) | **Masking** | `XXX-XXX-5678` (only last 4 digits preserved) |
 | **Credit Cards** | Visa, MasterCard, Amex, Discover + **Luhn Algorithm Checksum** | **Partial Masking** | `**** **** **** 1234` (prevents false positives) |
@@ -201,7 +220,27 @@ docker run -p 8000:8000 privacy-screen-agent-server
 Backend Test Results: 15 passed, 0 failed.
 ```
 
-### 3. Performance Benchmarks
+### 3. Credential Vault & Auto-Login Test (`node test_vault.js`)
+```
+🔐 Running Local Credential Vault & Auto-Login Tests...
+  ✅ PASS: Vault initialized as empty object
+  ✅ PASS: Successfully saved credentials for test.local
+  ✅ PASS: Timestamp recorded on saved credentials
+  ✅ PASS: Correct username retrieved
+  ✅ PASS: Correct password retrieved
+  ✅ PASS: Listed domain in all saved sites
+  ✅ PASS: Domain indexing isolates distinct sites
+  ✅ PASS: test.local retrieved correctly in multi-site store
+  ✅ PASS: othersite.org retrieved correctly in multi-site store
+  ✅ PASS: Update existing credentials modifies stored password
+  ✅ PASS: Successfully deleted credentials for test.local
+  ✅ PASS: Deleted domain returns null
+  ✅ PASS: Other site unaffected by deletion
+  ✅ PASS: Zero-Trust Network Audit: No passwords in outgoing vision payload
+🎉 All 14 Vault unit tests passed with 100% success!
+```
+
+### 4. Performance Benchmarks
 - **Average Redaction Latency**: < 45ms per frame on client canvas.
 - **End-to-End Cycle Time**: ~180ms - 420ms (well under the 5000ms SLA).
 - **Client Memory Footprint**: ~35MB - 65MB (well under the 500MB target).

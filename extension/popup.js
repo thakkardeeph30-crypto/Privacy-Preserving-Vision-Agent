@@ -27,11 +27,20 @@ document.addEventListener('DOMContentLoaded', async () => {
   const closeModalBtn = document.getElementById('closeModalBtn');
   const serverUrlInput = document.getElementById('serverUrlInput');
   const saveAdvancedBtn = document.getElementById('saveAdvancedBtn');
+  const vaultBanner = document.getElementById('vaultBanner');
+  const vaultSiteTitle = document.getElementById('vaultSiteTitle');
+  const vaultUserText = document.getElementById('vaultUserText');
+  const vaultLoginBtn = document.getElementById('vaultLoginBtn');
+  const vaultList = document.getElementById('vaultList');
+  const vaultCountTag = document.getElementById('vaultCountTag');
+
+  let currentHostname = '';
 
   // 1. Load initial state
   await refreshState();
   await checkServerStatus();
   await checkModelStatus();
+  await checkActiveSiteVault();
 
   // 2. Toggle Agent Active/Inactive
   toggleBtn.addEventListener('click', () => {
@@ -117,9 +126,29 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
-  // 7. Advanced Modal
+  // 7. Vault Auto-Login Quick Action
+  vaultLoginBtn.addEventListener('click', () => {
+    if (!currentHostname) return;
+    setProcessingState(true);
+    showLog(`🔑 Autofilling & logging into ${currentHostname}...`);
+
+    chrome.runtime.sendMessage({
+      type: 'AUTOFILL_LOGIN',
+      data: { hostname: currentHostname, autoSubmit: true }
+    }, (res) => {
+      setProcessingState(false);
+      if (res && res.success) {
+        showLog(`✅ Successfully logged in to ${currentHostname} with local storage credentials!`);
+      } else {
+        showLog(`❌ Auto-login failed: ${res?.error || 'Unknown error'}`);
+      }
+    });
+  });
+
+  // 8. Advanced Modal
   settingsBtn.addEventListener('click', () => {
     advancedModal.style.display = 'flex';
+    loadVaultManager();
   });
 
   closeModalBtn.addEventListener('click', () => {
@@ -140,6 +169,72 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 
   // --- Helper Functions ---
+  async function checkActiveSiteVault() {
+    try {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (!tab || !tab.url) return;
+      const urlObj = new URL(tab.url);
+      currentHostname = urlObj.hostname;
+      if (!currentHostname) return;
+
+      chrome.runtime.sendMessage({
+        type: 'GET_SITE_CREDENTIALS',
+        data: { hostname: currentHostname }
+      }, (res) => {
+        if (chrome.runtime.lastError) return;
+        if (res && res.credentials) {
+          vaultBanner.style.display = 'flex';
+          vaultSiteTitle.textContent = currentHostname;
+          vaultUserText.textContent = res.credentials.username;
+        } else {
+          vaultBanner.style.display = 'none';
+        }
+      });
+    } catch (e) {
+      vaultBanner.style.display = 'none';
+    }
+  }
+
+  function loadVaultManager() {
+    chrome.runtime.sendMessage({ type: 'GET_ALL_SAVED_SITES' }, (res) => {
+      if (chrome.runtime.lastError || !res || !res.sites) return;
+      const sites = res.sites;
+      vaultCountTag.textContent = `${sites.length} site${sites.length === 1 ? '' : 's'}`;
+
+      if (sites.length === 0) {
+        vaultList.innerHTML = '<div class="vault-empty">No credentials saved yet. Log into any site with the extension active to save.</div>';
+        return;
+      }
+
+      vaultList.innerHTML = '';
+      sites.forEach((item) => {
+        const row = document.createElement('div');
+        row.className = 'vault-item';
+        row.innerHTML = `
+          <div>
+            <div class="vault-item-domain">${item.domain}</div>
+            <div class="vault-item-user">${item.username}</div>
+          </div>
+          <button class="vault-item-del-btn" title="Delete saved credential" data-domain="${item.domain}">🗑️</button>
+        `;
+        vaultList.appendChild(row);
+      });
+
+      vaultList.querySelectorAll('.vault-item-del-btn').forEach((btn) => {
+        btn.addEventListener('click', (e) => {
+          const domain = btn.getAttribute('data-domain');
+          chrome.runtime.sendMessage({
+            type: 'DELETE_SITE_CREDENTIALS',
+            data: { hostname: domain }
+          }, () => {
+            loadVaultManager();
+            checkActiveSiteVault();
+            showLog(`Removed credentials for ${domain}`);
+          });
+        });
+      });
+    });
+  }
   async function refreshState() {
     chrome.runtime.sendMessage({ type: 'GET_STATE' }, (resp) => {
       if (chrome.runtime.lastError || !resp || !resp.state) return;

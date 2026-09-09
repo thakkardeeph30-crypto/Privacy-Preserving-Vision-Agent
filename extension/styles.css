@@ -610,3 +610,131 @@ body {
   width: 100%;
   justify-content: center;
 }
+
+/* Local Credential Vault Styles */
+.vault-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  background: linear-gradient(135deg, rgba(14, 165, 233, 0.15), rgba(99, 102, 241, 0.15));
+  border: 1px solid rgba(56, 189, 248, 0.4);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 4px 12px rgba(56, 189, 248, 0.15);
+  animation: privacyAgentFade 0.3s ease-out;
+}
+
+.vault-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.vault-icon {
+  font-size: 18px;
+}
+
+.vault-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.vault-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--cyan);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.vault-user {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-main);
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vault-btn {
+  background: linear-gradient(135deg, #0284c7, #2563eb);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 6px 12px;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 2px 8px var(--cyan-glow);
+  transition: all var(--transition-fast);
+}
+
+.vault-btn:hover {
+  filter: brightness(1.15);
+  transform: translateY(-1px);
+}
+
+.count-tag {
+  font-size: 10px;
+  background: rgba(255, 255, 255, 0.08);
+  padding: 2px 6px;
+  border-radius: 10px;
+  color: var(--text-dim);
+}
+
+.vault-list-container {
+  max-height: 140px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: rgba(15, 23, 42, 0.6);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 8px;
+}
+
+.vault-empty {
+  font-size: 11px;
+  color: var(--text-dim);
+  font-style: italic;
+  text-align: center;
+  padding: 8px;
+}
+
+.vault-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: rgba(30, 41, 59, 0.7);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+
+.vault-item-domain {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--cyan);
+}
+
+.vault-item-user {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.vault-item-del-btn {
+  background: none;
+  border: none;
+  color: var(--rose);
+  cursor: pointer;
+  font-size: 13px;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.vault-item-del-btn:hover {
+  background: rgba(244, 63, 94, 0.15);
+}
