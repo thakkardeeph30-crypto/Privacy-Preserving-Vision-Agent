@@ -8,7 +8,7 @@
 </head>
 <body>
   <div class="container">
-    <!-- Header -->
+    <!-- App Header -->
     <header class="app-header">
       <div class="brand">
         <div class="logo-wrapper">
@@ -17,7 +17,7 @@
         </div>
         <div class="brand-text">
           <h1>PrivacyScreen</h1>
-          <span class="version-tag">Agent v1.0</span>
+          <span class="version-tag">OpenAgent AI</span>
         </div>
       </div>
       <div class="server-badge" id="serverBadge" title="FastAPI Vision Backend Status">
@@ -26,112 +26,332 @@
       </div>
     </header>
 
-    <!-- Main Status Banner -->
-    <div class="status-card">
-      <div class="status-indicator">
-        <span class="status-label">Agent State</span>
-        <div class="status-value" id="status">Inactive</div>
-      </div>
-      <button id="toggleBtn" class="primary-btn toggle-btn">
-        <span class="btn-icon">⚡</span>
-        <span class="btn-text">Activate</span>
+    <!-- Navigation Tab Bar -->
+    <nav class="tab-bar">
+      <button class="tab-btn active" data-tab="visionTab">
+        <span>🛡️ Vision</span>
       </button>
-    </div>
+      <button class="tab-btn" data-tab="formTab">
+        <span>📋 Info Box</span>
+        <span class="tab-pill" id="formFieldsCountPill" style="display: none;">0</span>
+      </button>
+      <button class="tab-btn" data-tab="profileTab">
+        <span>👤 Profile DB</span>
+      </button>
+    </nav>
 
-    <!-- Local Credential Vault Quick Action Banner -->
-    <div class="vault-card" id="vaultBanner" style="display: none;">
-      <div class="vault-info">
-        <span class="vault-icon">🔑</span>
-        <div class="vault-text">
-          <span class="vault-title" id="vaultSiteTitle">Saved Login Available</span>
-          <span class="vault-user" id="vaultUserText">user@example.com</span>
+    <!-- ================= TAB 1: VISION AGENT ================= -->
+    <div class="tab-content active" id="visionTab">
+      <!-- Main Status Banner -->
+      <div class="status-card">
+        <div class="status-indicator">
+          <span class="status-label">Agent State</span>
+          <div class="status-value" id="status">Inactive</div>
         </div>
-      </div>
-      <button id="vaultLoginBtn" class="vault-btn" title="Autofill and Log in">
-        <span>Autofill & Login</span>
-      </button>
-    </div>
-
-    <!-- Agent Action Task Bar -->
-    <section class="task-section">
-      <div class="section-label">Vision Agent Task</div>
-      <div class="task-input-wrapper">
-        <input 
-          type="text" 
-          id="taskInput" 
-          placeholder="e.g., Click the login button..." 
-          value="Click the login button"
-          autocomplete="off"
-        />
-        <button id="runTaskBtn" class="run-btn" title="Analyze Screen & Run Task">
-          <span class="run-btn-icon">🚀</span>
-          <span>Run</span>
+        <button id="toggleBtn" class="primary-btn toggle-btn">
+          <span class="btn-icon">⚡</span>
+          <span class="btn-text">Activate</span>
         </button>
       </div>
-      <div class="quick-chips">
-        <button class="chip-btn" data-task="Click the login button">Click Login</button>
-        <button class="chip-btn" data-task="Fill in the contact email field">Fill Email</button>
-        <button class="chip-btn" data-task="Scroll down to reviews">Scroll Down</button>
+
+      <!-- Local Credential Vault Quick Action Banner -->
+      <div class="vault-card" id="vaultBanner" style="display: none;">
+        <div class="vault-info">
+          <span class="vault-icon">🔑</span>
+          <div class="vault-text">
+            <span class="vault-title" id="vaultSiteTitle">Saved Login Available</span>
+            <span class="vault-user" id="vaultUserText">user@example.com</span>
+          </div>
+        </div>
+        <button id="vaultLoginBtn" class="vault-btn" title="Autofill and Log in">
+          <span>Autofill & Login</span>
+        </button>
       </div>
-    </section>
 
-    <!-- Privacy Filters & Rules -->
-    <div class="settings">
-      <div class="settings-header">
-        <h3>Privacy Redaction Filters</h3>
-        <span class="privacy-badge">100% On-Device</span>
+      <!-- Agent Action Task Bar -->
+      <section class="task-section">
+        <div class="section-label">Autonomous Vision Task</div>
+        <div class="task-input-wrapper">
+          <input 
+            type="text" 
+            id="taskInput" 
+            placeholder="e.g., Click the login button..." 
+            value="Click the login button"
+            autocomplete="off"
+          />
+          <button id="runTaskBtn" class="run-btn" title="Analyze Screen & Run Task">
+            <span class="run-btn-icon">🚀</span>
+            <span>Run</span>
+          </button>
+        </div>
+        <div class="quick-chips">
+          <button class="chip-btn" data-task="Click the login button">Click Login</button>
+          <button class="chip-btn" data-task="Fill in contact details from profile">Fill Profile</button>
+          <button class="chip-btn" data-task="Scroll down to form">Scroll Down</button>
+        </div>
+      </section>
+
+      <!-- Privacy Filters & Rules -->
+      <div class="settings">
+        <div class="settings-header">
+          <h3>Privacy Redaction Filters</h3>
+          <span class="privacy-badge">100% On-Device</span>
+        </div>
+        <div class="toggles-grid">
+          <label class="toggle-card">
+            <input type="checkbox" checked id="blurFaces">
+            <div class="toggle-content">
+              <span class="toggle-title">👤 Blur Faces</span>
+              <span class="toggle-desc">Mosaic blur on avatars & portraits</span>
+            </div>
+            <span class="switch"></span>
+          </label>
+
+          <label class="toggle-card">
+            <input type="checkbox" checked id="maskPasswords">
+            <div class="toggle-content">
+              <span class="toggle-title">🔒 Mask Passwords</span>
+              <span class="toggle-desc">Blackout password & secret fields</span>
+            </div>
+            <span class="switch"></span>
+          </label>
+
+          <label class="toggle-card">
+            <input type="checkbox" checked id="maskPII">
+            <div class="toggle-content">
+              <span class="toggle-title">💳 Mask PII & Cards</span>
+              <span class="toggle-desc">Redact emails, phones & credit cards</span>
+            </div>
+            <span class="switch"></span>
+          </label>
+        </div>
       </div>
-      <div class="toggles-grid">
-        <label class="toggle-card">
-          <input type="checkbox" checked id="blurFaces">
-          <div class="toggle-content">
-            <span class="toggle-title">👤 Blur Faces</span>
-            <span class="toggle-desc">Mosaic blur on avatars & portraits</span>
-          </div>
-          <span class="switch"></span>
-        </label>
 
-        <label class="toggle-card">
-          <input type="checkbox" checked id="maskPasswords">
-          <div class="toggle-content">
-            <span class="toggle-title">🔒 Mask Passwords</span>
-            <span class="toggle-desc">Blackout password & secret fields</span>
-          </div>
-          <span class="switch"></span>
-        </label>
-
-        <label class="toggle-card">
-          <input type="checkbox" checked id="maskPII">
-          <div class="toggle-content">
-            <span class="toggle-title">💳 Mask PII & Cards</span>
-            <span class="toggle-desc">Redact emails, phones & credit cards</span>
-          </div>
-          <span class="switch"></span>
-        </label>
+      <!-- Telemetry & Performance Stats -->
+      <div class="stats">
+        <div class="stat-box">
+          <span class="stat-name">Local ViT</span>
+          <span class="stat-value" id="modelStatus">Loading...</span>
+        </div>
+        <div class="stat-box">
+          <span class="stat-name">Frames Processed</span>
+          <span class="stat-value highlight" id="frameCount">0</span>
+        </div>
+        <div class="stat-box">
+          <span class="stat-name">PII Redacted</span>
+          <span class="stat-value alert" id="redactedCount">0</span>
+        </div>
+        <div class="stat-box">
+          <span class="stat-name">Latency</span>
+          <span class="stat-value" id="latencyStat">0ms</span>
+        </div>
       </div>
     </div>
 
-    <!-- Telemetry & Performance Stats -->
-    <div class="stats">
-      <div class="stat-box">
-        <span class="stat-name">Local ViT</span>
-        <span class="stat-value" id="modelStatus">Loading...</span>
+    <!-- ================= TAB 2: OPENAGENT FORM INFO BOX ================= -->
+    <div class="tab-content" id="formTab" style="display: none;">
+      <!-- Form Inspector Control Bar -->
+      <div class="sub-header-bar">
+        <div>
+          <div class="sub-header-title">Page Form Inspector</div>
+          <div class="sub-header-subtitle" id="formSummaryText">Scanning active page...</div>
+        </div>
+        <div style="display: flex; gap: 6px; align-items: center;">
+          <button id="toggleVisualLayerBtn" class="small-action-btn" title="Toggle floating holographic badges on web page">
+            <span>👁️ Visual Layer: Off</span>
+          </button>
+          <button id="rescanFormsBtn" class="icon-action-btn" title="Rescan page forms">
+            <span>🔄</span>
+          </button>
+        </div>
       </div>
-      <div class="stat-box">
-        <span class="stat-name">Frames Processed</span>
-        <span class="stat-value highlight" id="frameCount">0</span>
+
+      <!-- Universal Auth Intelligence Card -->
+      <div class="auth-intel-card" id="authIntelCard" style="display: none;">
+        <div class="auth-intel-header">
+          <span class="auth-intel-icon">🔐</span>
+          <div class="auth-intel-title">Authentication Flow Detected</div>
+        </div>
+        <div class="auth-methods-container" id="authMethodsContainer">
+          <!-- Dynamic Auth Badges -->
+        </div>
+        <div class="auth-quick-actions" id="authQuickActions">
+          <!-- Dynamic Action Buttons -->
+        </div>
       </div>
-      <div class="stat-box">
-        <span class="stat-name">PII Redacted</span>
-        <span class="stat-value alert" id="redactedCount">0</span>
+
+      <!-- Profile Database Auto-Match Banner -->
+      <div class="profile-match-banner" id="profileMatchBanner" style="display: none;">
+        <div class="profile-match-text">
+          <span class="profile-match-icon">💡</span>
+          <div>
+            <div class="profile-match-title"><span id="matchedCountText">0</span> Profile fields matched</div>
+            <div class="profile-match-sub">Data found in your local Profile Database</div>
+          </div>
+        </div>
+        <button id="applyProfileMatchesBtn" class="fill-profile-btn">
+          <span>⚡ 1-Click Fill</span>
+        </button>
       </div>
-      <div class="stat-box">
-        <span class="stat-name">Latency</span>
-        <span class="stat-value" id="latencyStat">0ms</span>
+
+      <!-- Detected Fields Inspector (Info Box) -->
+      <div class="fields-inspector-container">
+        <div class="fields-list-header">
+          <span>Detected Input Fields</span>
+          <span class="count-tag" id="fieldsCountTag">0 fields</span>
+        </div>
+        <div class="fields-list" id="detectedFieldsList">
+          <div class="empty-fields-state">
+            <span>🔍</span>
+            <p>Scanning active webpage for forms and input fields...</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Info Box Action Footer -->
+      <div class="info-box-actions">
+        <button id="autofillPageBtn" class="primary-btn full-width">
+          <span class="btn-icon">🤖</span>
+          <span>Fill Page with OpenAgent</span>
+        </button>
+        <div style="display: flex; gap: 8px; margin-top: 8px;">
+          <button id="autofillAndSubmitBtn" class="secondary-btn" style="flex: 1;">
+            <span>🚀 Fill & Submit</span>
+          </button>
+          <button id="saveFieldsToDbBtn" class="secondary-btn" style="flex: 1;" title="Save these values into your Profile Database">
+            <span>💾 Save to DB</span>
+          </button>
+        </div>
       </div>
     </div>
 
-    <!-- Feedback & Action Log -->
+    <!-- ================= TAB 3: LOCAL PROFILE DATABASE ================= -->
+    <div class="tab-content" id="profileTab" style="display: none;">
+      <div class="sub-header-bar">
+        <div>
+          <div class="sub-header-title">Local Profile Database</div>
+          <div class="sub-header-subtitle">🔒 100% On-Device in chrome.storage.local</div>
+        </div>
+        <span class="privacy-badge">Zero-Cloud</span>
+      </div>
+
+      <div class="profile-db-form">
+        <!-- Personal Section -->
+        <div class="profile-group">
+          <div class="profile-group-title">👤 Personal Identity</div>
+          <div class="profile-grid">
+            <div class="field-item">
+              <label>Full Name</label>
+              <input type="text" id="prof_fullName" placeholder="e.g. Alex Vance" />
+            </div>
+            <div class="field-item">
+              <label>Username / Handle</label>
+              <input type="text" id="prof_username" placeholder="e.g. alex.vance" />
+            </div>
+            <div class="field-item">
+              <label>First Name</label>
+              <input type="text" id="prof_firstName" placeholder="e.g. Alex" />
+            </div>
+            <div class="field-item">
+              <label>Last Name</label>
+              <input type="text" id="prof_lastName" placeholder="e.g. Vance" />
+            </div>
+          </div>
+        </div>
+
+        <!-- Contact Section -->
+        <div class="profile-group">
+          <div class="profile-group-title">📧 Contact Information</div>
+          <div class="profile-grid">
+            <div class="field-item">
+              <label>Primary Email</label>
+              <input type="email" id="prof_email" placeholder="e.g. alex@example.com" />
+            </div>
+            <div class="field-item">
+              <label>Phone Number</label>
+              <input type="tel" id="prof_phone" placeholder="e.g. +1 (555) 349-2810" />
+            </div>
+            <div class="field-item full-span">
+              <label>Secondary / Recovery Email</label>
+              <input type="email" id="prof_altEmail" placeholder="e.g. alex.backup@mail.org" />
+            </div>
+          </div>
+        </div>
+
+        <!-- Address Section -->
+        <div class="profile-group">
+          <div class="profile-group-title">🏠 Address & Location</div>
+          <div class="profile-grid">
+            <div class="field-item full-span">
+              <label>Street Address</label>
+              <input type="text" id="prof_streetAddress" placeholder="e.g. 742 Cyber Security Way" />
+            </div>
+            <div class="field-item">
+              <label>Apt / Suite / Unit</label>
+              <input type="text" id="prof_apt" placeholder="e.g. Suite 404" />
+            </div>
+            <div class="field-item">
+              <label>City</label>
+              <input type="text" id="prof_city" placeholder="e.g. San Francisco" />
+            </div>
+            <div class="field-item">
+              <label>State / Province</label>
+              <input type="text" id="prof_state" placeholder="e.g. CA" />
+            </div>
+            <div class="field-item">
+              <label>ZIP / Postal Code</label>
+              <input type="text" id="prof_zipCode" placeholder="e.g. 94105" />
+            </div>
+            <div class="field-item full-span">
+              <label>Country</label>
+              <input type="text" id="prof_country" placeholder="e.g. United States" />
+            </div>
+          </div>
+        </div>
+
+        <!-- Professional Section -->
+        <div class="profile-group">
+          <div class="profile-group-title">💼 Professional & Work</div>
+          <div class="profile-grid">
+            <div class="field-item">
+              <label>Company / Organization</label>
+              <input type="text" id="prof_company" placeholder="e.g. Quantum Shield AI" />
+            </div>
+            <div class="field-item">
+              <label>Job Title</label>
+              <input type="text" id="prof_jobTitle" placeholder="e.g. Security Architect" />
+            </div>
+            <div class="field-item full-span">
+              <label>Website / Portfolio URL</label>
+              <input type="url" id="prof_website" placeholder="e.g. https://quantumshield.privacy" />
+            </div>
+          </div>
+        </div>
+
+        <!-- Custom Attributes -->
+        <div class="profile-group">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+            <div class="profile-group-title" style="margin-bottom: 0;">🧩 Custom Attributes</div>
+            <button type="button" id="addCustomAttrBtn" class="small-action-btn">+ Add Field</button>
+          </div>
+          <div id="customAttrsContainer">
+            <!-- Dynamic Custom Attributes -->
+          </div>
+        </div>
+
+        <!-- Save Database Button -->
+        <div style="margin-top: 14px;">
+          <button id="saveProfileDbBtn" class="primary-btn full-width">
+            <span>💾 Save Profile Database</span>
+          </button>
+          <button id="clearProfileDbBtn" class="secondary-btn full-width" style="margin-top: 8px;">
+            <span>🗑️ Reset to Defaults</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Common Action & Feedback Log -->
     <div class="log-tray" id="logTray" style="display: none;">
       <div class="log-title">Latest Execution</div>
       <div class="log-message" id="logMessage">Ready.</div>
@@ -142,8 +362,8 @@
       <button id="maskDomBtn" class="secondary-btn" title="Mask PII in current page DOM">
         <span>👁️ Redact Page DOM</span>
       </button>
-      <button id="settingsBtn" class="secondary-btn icon-btn">
-        <span>⚙️ Advanced</span>
+      <button id="settingsBtn" class="secondary-btn icon-btn" title="Open Settings & Vault Manager">
+        <span>⚙️ Settings</span>
       </button>
     </footer>
 

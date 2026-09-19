@@ -13,8 +13,10 @@
   let isAgentActive = false;
   let PrivacyFilterClass = window.PrivacyFilter || null;
   let ActionExecutorClass = window.ActionExecutor || null;
+  let OpenAgentAnalyzerClass = window.OpenAgentAnalyzer || null;
   let privacyFilter = PrivacyFilterClass ? new PrivacyFilterClass() : null;
   let actionExecutor = ActionExecutorClass ? new ActionExecutorClass() : null;
+  let openAgentAnalyzer = OpenAgentAnalyzerClass ? new OpenAgentAnalyzerClass() : null;
 
   async function ensureModules() {
     if (!privacyFilter) {
@@ -38,6 +40,18 @@
         if (window.ActionExecutor) {
           ActionExecutorClass = window.ActionExecutor;
           actionExecutor = new ActionExecutorClass();
+        }
+      }
+    }
+    if (!openAgentAnalyzer) {
+      try {
+        const mod = await import(chrome.runtime.getURL('openagent-analyzer.js'));
+        OpenAgentAnalyzerClass = mod.default || mod.OpenAgentAnalyzer || window.OpenAgentAnalyzer;
+        openAgentAnalyzer = new OpenAgentAnalyzerClass();
+      } catch (e) {
+        if (window.OpenAgentAnalyzer) {
+          OpenAgentAnalyzerClass = window.OpenAgentAnalyzer;
+          openAgentAnalyzer = new OpenAgentAnalyzerClass();
         }
       }
     }
@@ -111,6 +125,26 @@
 
         case 'AUTOFILL_AND_LOGIN':
           handleAutofillAndLogin(request, sendResponse);
+          break;
+
+        case 'SCAN_PAGE_FORMS': {
+          const scanData = openAgentAnalyzer ? openAgentAnalyzer.scanPageForms(document) : { fields: [], loginMethods: [] };
+          sendResponse({ success: true, ...scanData });
+          break;
+        }
+
+        case 'TOGGLE_VISUAL_LAYER': {
+          const isVisible = openAgentAnalyzer ? openAgentAnalyzer.toggleVisualLayer(request.enable, request.matchedKeys) : false;
+          sendResponse({ success: true, isVisible });
+          break;
+        }
+
+        case 'AUTOFILL_FORM_FIELDS':
+          handleAutofillFormFields(request.data || request.fields, request.autoSubmit, sendResponse);
+          break;
+
+        case 'FILL_OTP_CODE':
+          handleFillOTPCode(request.code, request.autoSubmit, sendResponse);
           break;
 
         default:
@@ -201,15 +235,146 @@
   }
 
   function setNativeInputValue(el, val) {
+    if (!el) return;
     el.focus();
+    const tag = (el.tagName || '').toLowerCase();
+    if (tag === 'select') {
+      el.value = val;
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+      return;
+    }
+    if (tag === 'textarea') {
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')?.set;
+      if (setter) setter.call(el, val !== undefined && val !== null ? val : '');
+      else el.value = val !== undefined && val !== null ? val : '';
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+      return;
+    }
     const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
     if (setter) {
-      setter.call(el, val || '');
+      setter.call(el, val !== undefined && val !== null ? val : '');
     } else {
-      el.value = val || '';
+      el.value = val !== undefined && val !== null ? val : '';
     }
     el.dispatchEvent(new Event('input', { bubbles: true }));
     el.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+
+  // --- OpenAgent Form Autofill Engine ---
+  async function handleAutofillFormFields(fieldsData, autoSubmit, sendResponse) {
+    try {
+      if (!fieldsData || !Array.isArray(fieldsData)) {
+        throw new Error('Invalid fields array provided for autofill');
+      }
+
+      let filledCount = 0;
+      let targetForm = null;
+
+      for (const item of fieldsData) {
+        const { selector, value, key } = item;
+        if (!selector || value === undefined || value === null || value === '') continue;
+
+        let el = document.querySelector(selector);
+        if (!el && key) {
+          el = document.querySelector(`[name="${key}" i], [id="${key}" i]`);
+        }
+
+        if (el) {
+          setNativeInputValue(el, value);
+          if (actionExecutor) {
+            actionExecutor.highlightElement(el, `OPENAGENT: ${key || 'FIELD'}`);
+          }
+          filledCount++;
+          if (!targetForm && el.form) {
+            targetForm = el.form;
+          }
+          await new Promise((r) => setTimeout(r, 60));
+        }
+      }
+
+      if (actionExecutor && filledCount > 0) {
+        actionExecutor.showFloatingBadge(`🤖 OpenAgent filled ${filledCount} field${filledCount === 1 ? '' : 's'}`);
+      }
+
+      let submitted = false;
+      if (autoSubmit && targetForm) {
+        await new Promise((r) => setTimeout(r, 300));
+        const submitBtn = targetForm.querySelector('button[type="submit"], input[type="submit"]');
+        if (submitBtn) {
+          submitBtn.click();
+        } else {
+          targetForm.requestSubmit ? targetForm.requestSubmit() : targetForm.submit();
+        }
+        submitted = true;
+      }
+
+      sendResponse({ success: true, filledCount, submitted });
+    } catch (err) {
+      sendResponse({ success: false, error: err.message });
+    }
+  }
+
+  // --- OpenAgent OTP / 2FA Code Injector ---
+  async function handleFillOTPCode(code, autoSubmit, sendResponse) {
+    try {
+      const codeStr = String(code || '').trim();
+      if (!codeStr) throw new Error('No OTP code provided');
+
+      // Check for segmented multi-box inputs (e.g. 4 to 8 single-digit inputs)
+      const singleBoxes = Array.from(document.querySelectorAll('input[maxlength="1"]')).filter((el) => {
+        if (el.getBoundingClientRect) {
+          const r = el.getBoundingClientRect();
+          return r.width > 0 && r.height > 0;
+        }
+        return true;
+      });
+
+      if (singleBoxes.length >= 4 && singleBoxes.length <= 8) {
+        const fillLen = Math.min(singleBoxes.length, codeStr.length);
+        for (let i = 0; i < fillLen; i++) {
+          setNativeInputValue(singleBoxes[i], codeStr[i]);
+          if (actionExecutor) actionExecutor.highlightElement(singleBoxes[i], `OTP [${i + 1}]`);
+          await new Promise((r) => setTimeout(r, 60));
+        }
+
+        if (actionExecutor) {
+          actionExecutor.showFloatingBadge(`🔑 OpenAgent filled ${fillLen}-digit OTP code`);
+        }
+
+        if (autoSubmit) {
+          await new Promise((r) => setTimeout(r, 300));
+          const submitBtn = document.querySelector('button[type="submit"], #verify-btn, #submit-otp, button#verify, input[value*="Verify" i]');
+          if (submitBtn) submitBtn.click();
+        }
+        sendResponse({ success: true, multiBox: true, digitsFilled: fillLen });
+        return;
+      }
+
+      // Single OTP input fallback
+      const otpInput = document.querySelector('input[autocomplete="one-time-code"], input[name*="otp" i], input[id*="otp" i], input[name*="code" i], input[id*="code" i]');
+      if (otpInput) {
+        setNativeInputValue(otpInput, codeStr);
+        if (actionExecutor) {
+          actionExecutor.highlightElement(otpInput, 'OTP CODE');
+          actionExecutor.showFloatingBadge('🔑 OpenAgent filled OTP verification code');
+        }
+        if (autoSubmit) {
+          await new Promise((r) => setTimeout(r, 300));
+          const form = otpInput.form;
+          if (form) {
+            form.requestSubmit ? form.requestSubmit() : form.submit();
+          }
+        }
+        sendResponse({ success: true, multiBox: false, digitsFilled: codeStr.length });
+        return;
+      }
+
+      throw new Error('No OTP or verification input found on page');
+    } catch (err) {
+      sendResponse({ success: false, error: err.message });
+    }
   }
 
   // --- Credential Capture & Save Interceptor ---

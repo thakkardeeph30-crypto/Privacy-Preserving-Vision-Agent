@@ -161,6 +161,67 @@
       color: var(--text-dim);
     }
     .log-item.highlight { color: var(--emerald); font-weight: 600; }
+
+    /* New Registration Form & Auth Showcase Styles */
+    .form-grid-2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+    .form-full { grid-column: span 2; }
+    .sso-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+    .sso-btn {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--card-border);
+      color: #fff;
+      padding: 8px 10px;
+      border-radius: 6px;
+      font-size: 11.5px;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      transition: all 0.15s;
+    }
+    .sso-btn:hover {
+      background: rgba(255, 255, 255, 0.1);
+      border-color: rgba(255, 255, 255, 0.2);
+    }
+    .otp-container {
+      display: flex;
+      gap: 8px;
+      justify-content: center;
+      margin: 10px 0;
+    }
+    .otp-box {
+      width: 42px;
+      height: 48px;
+      background: #090d16;
+      border: 1px solid var(--card-border);
+      border-radius: 8px;
+      font-size: 20px;
+      font-weight: 700;
+      text-align: center;
+      color: var(--cyan);
+      outline: none;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+    .otp-box:focus {
+      border-color: var(--cyan);
+      box-shadow: 0 0 10px rgba(56, 189, 248, 0.3);
+    }
+    .auth-step-box {
+      background: #090d16;
+      border: 1px solid var(--card-border);
+      border-radius: 8px;
+      padding: 14px;
+    }
   </style>
 </head>
 <body>
@@ -264,6 +325,150 @@
           <span>💳 Process Secure Payment</span>
         </button>
       </div>
+
+      <!-- Section 5: Comprehensive Registration / Profile Form -->
+      <div class="card" id="registration-card" style="grid-column: span 2;">
+        <div class="card-title">
+          <span>5. Comprehensive Profile & Registration Form</span>
+          <span class="rule-tag">OpenAgent Info Box Target</span>
+        </div>
+        <form id="mockRegistrationForm" onsubmit="event.preventDefault(); recordEvent('Submitted Comprehensive Registration Form!');">
+          <div class="form-grid-2">
+            <div class="field-group">
+              <label for="reg-fullname">Full Legal Name</label>
+              <input type="text" id="reg-fullname" name="fullName" placeholder="e.g. Alex Vance" autocomplete="name" />
+            </div>
+            <div class="field-group">
+              <label for="reg-email">Primary Email Address</label>
+              <input type="email" id="reg-email" name="email" placeholder="e.g. alex.vance@privacy-defense.io" autocomplete="email" />
+            </div>
+            <div class="field-group">
+              <label for="reg-phone">Telephone / Mobile</label>
+              <input type="tel" id="reg-phone" name="phone" placeholder="e.g. +1 (555) 349-2810" autocomplete="tel" />
+            </div>
+            <div class="field-group">
+              <label for="reg-company">Organization / Employer</label>
+              <input type="text" id="reg-company" name="company" placeholder="e.g. Quantum Shield AI" autocomplete="organization" />
+            </div>
+            <div class="field-group">
+              <label for="reg-title">Job Title / Designation</label>
+              <input type="text" id="reg-title" name="jobTitle" placeholder="e.g. Security Architect" autocomplete="organization-title" />
+            </div>
+            <div class="field-group">
+              <label for="reg-street">Street Address</label>
+              <input type="text" id="reg-street" name="streetAddress" placeholder="e.g. 742 Cyber Security Way" autocomplete="address-line1" />
+            </div>
+            <div class="field-group">
+              <label for="reg-city">City</label>
+              <input type="text" id="reg-city" name="city" placeholder="e.g. San Francisco" autocomplete="address-level2" />
+            </div>
+            <div class="field-group">
+              <label for="reg-state">State / Region</label>
+              <input type="text" id="reg-state" name="state" placeholder="e.g. CA" autocomplete="address-level1" />
+            </div>
+            <div class="field-group">
+              <label for="reg-zip">ZIP / Postal Code</label>
+              <input type="text" id="reg-zip" name="zipCode" placeholder="e.g. 94105" autocomplete="postal-code" />
+            </div>
+            <div class="field-group">
+              <label for="reg-country">Country</label>
+              <input type="text" id="reg-country" name="country" placeholder="e.g. United States" autocomplete="country-name" />
+            </div>
+          </div>
+          <div style="display: flex; gap: 10px; margin-top: 16px;">
+            <button type="submit" id="reg-submit-btn" class="btn" style="flex: 2;">
+              <span>📝 Submit Profile Registration</span>
+            </button>
+            <button type="button" class="btn btn-secondary" style="flex: 1;" onclick="clearRegistrationForm()">
+              <span>Clear Form</span>
+            </button>
+          </div>
+        </form>
+      </div>
+
+      <!-- Section 6: Universal Authentication Methods Showcase -->
+      <div class="card" id="universal-auth-card" style="grid-column: span 2;">
+        <div class="card-title">
+          <span>6. Universal Authentication Methods Showcase</span>
+          <span class="rule-tag">SSO • Multi-Step • OTP • Magic Link</span>
+        </div>
+        
+        <!-- A. Social SSO -->
+        <div style="margin-bottom: 16px;">
+          <div style="font-size: 12px; font-weight: 600; color: var(--text-dim); margin-bottom: 8px;">A. One-Click Social SSO Identity Providers:</div>
+          <div class="sso-grid">
+            <button type="button" id="google-sso-btn" class="sso-btn" onclick="recordEvent('Triggered Google Sign-In SSO')">
+              <span style="font-size: 15px;">🌐</span> Sign in with Google
+            </button>
+            <button type="button" id="github-sso-btn" class="sso-btn" onclick="recordEvent('Triggered GitHub Sign-In SSO')">
+              <span style="font-size: 15px;">🐙</span> Sign in with GitHub
+            </button>
+            <button type="button" id="apple-sso-btn" class="sso-btn" onclick="recordEvent('Triggered Apple Sign-In SSO')">
+              <span style="font-size: 15px;">🍎</span> Sign in with Apple
+            </button>
+            <button type="button" id="ms-sso-btn" class="sso-btn" onclick="recordEvent('Triggered Microsoft Sign-In SSO')">
+              <span style="font-size: 15px;">🪟</span> Sign in with Microsoft
+            </button>
+          </div>
+        </div>
+
+        <!-- B. Multi-Step Flow Simulator -->
+        <div style="margin-bottom: 16px;">
+          <div style="font-size: 12px; font-weight: 600; color: var(--text-dim); margin-bottom: 8px;">B. Multi-Step / Split Login Flow Simulator:</div>
+          <div class="auth-step-box">
+            <div id="step-1-container">
+              <label style="font-size: 12px; color: var(--text-dim);">Step 1: Enter Identifier</label>
+              <div style="display: flex; gap: 8px; margin-top: 6px;">
+                <input type="text" id="multistep-identifier" placeholder="username or email" value="alex.vance@enterprise.com" style="flex: 2;" />
+                <button type="button" id="multistep-next-btn" class="btn" style="flex: 1;" onclick="advanceMultiStep()">
+                  <span>Next ➔</span>
+                </button>
+              </div>
+            </div>
+            <div id="step-2-container" style="display: none; margin-top: 8px;">
+              <label style="font-size: 12px; color: var(--text-dim);">Step 2: Enter Password for <span id="step-user-tag" style="color: var(--cyan);">user</span></label>
+              <div style="display: flex; gap: 8px; margin-top: 6px;">
+                <input type="password" id="multistep-password" placeholder="Account Password" style="flex: 2;" />
+                <button type="button" id="multistep-login-btn" class="btn" style="flex: 1;" onclick="completeMultiStep()">
+                  <span>Sign In</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- C. 6-Digit Segmented OTP -->
+        <div style="margin-bottom: 16px;">
+          <div style="font-size: 12px; font-weight: 600; color: var(--text-dim); margin-bottom: 4px;">C. 6-Digit Segmented OTP Verification:</div>
+          <div class="otp-container">
+            <input type="text" maxlength="1" class="otp-box" id="otp-1" data-idx="1" autocomplete="one-time-code" />
+            <input type="text" maxlength="1" class="otp-box" id="otp-2" data-idx="2" />
+            <input type="text" maxlength="1" class="otp-box" id="otp-3" data-idx="3" />
+            <input type="text" maxlength="1" class="otp-box" id="otp-4" data-idx="4" />
+            <input type="text" maxlength="1" class="otp-box" id="otp-5" data-idx="5" />
+            <input type="text" maxlength="1" class="otp-box" id="otp-6" data-idx="6" />
+          </div>
+          <div style="display: flex; justify-content: center; gap: 10px;">
+            <button type="button" id="verify-otp-btn" class="btn" onclick="verifyOTPCode()">
+              <span>🔑 Verify OTP Code</span>
+            </button>
+            <button type="button" class="btn btn-secondary" onclick="clearOTPInputs()">
+              <span>Clear Digits</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- D. Magic Link -->
+        <div>
+          <div style="font-size: 12px; font-weight: 600; color: var(--text-dim); margin-bottom: 6px;">D. Passwordless Magic Link:</div>
+          <div style="display: flex; gap: 8px;">
+            <input type="email" id="magiclink-email" placeholder="user@company.com" value="alex.vance@privacy-defense.io" style="flex: 2;" />
+            <button type="button" id="magiclink-btn" class="btn btn-secondary" style="flex: 1;" onclick="recordEvent('Dispatched Magic Link to: ' + document.getElementById('magiclink-email').value)">
+              <span>✨ Send Magic Link</span>
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- Live Event Log & Action Tracker -->
@@ -293,7 +498,52 @@
       log.innerHTML = '<div class="log-item">Console cleared.</div>';
     }
 
-    // Attach click listeners to all buttons for instant feedback
+    function clearRegistrationForm() {
+      const form = document.getElementById('mockRegistrationForm');
+      form.querySelectorAll('input').forEach(inp => inp.value = '');
+      recordEvent('Cleared all registration fields. Ready to test OpenAgent Auto-Fill.');
+    }
+
+    function advanceMultiStep() {
+      const user = document.getElementById('multistep-identifier').value;
+      document.getElementById('step-user-tag').textContent = user || 'user';
+      document.getElementById('step-2-container').style.display = 'block';
+      recordEvent(`Multi-Step Step 1 Advanced: Identifier confirmed (${user}). Step 2 Password active.`);
+    }
+
+    function completeMultiStep() {
+      recordEvent('Multi-Step Step 2 Completed: Successfully authenticated!');
+    }
+
+    function verifyOTPCode() {
+      const digits = [1,2,3,4,5,6].map(i => document.getElementById(`otp-${i}`).value).join('');
+      if (digits.length === 6) {
+        recordEvent(`OTP Code [${digits}] Verified Successfully!`);
+      } else {
+        recordEvent(`OTP Incomplete: Entered ${digits.length}/6 digits.`);
+      }
+    }
+
+    function clearOTPInputs() {
+      [1,2,3,4,5,6].forEach(i => document.getElementById(`otp-${i}`).value = '');
+      recordEvent('Cleared OTP digit boxes.');
+    }
+
+    // Auto-advance OTP inputs on type
+    document.querySelectorAll('.otp-box').forEach((box, i, arr) => {
+      box.addEventListener('input', () => {
+        if (box.value.length === 1 && i < arr.length - 1) {
+          arr[i + 1].focus();
+        }
+      });
+      box.addEventListener('keydown', (e) => {
+        if (e.key === 'Backspace' && !box.value && i > 0) {
+          arr[i - 1].focus();
+        }
+      });
+    });
+
+    // Attach click listeners to all buttons for visual feedback
     document.querySelectorAll('button').forEach(btn => {
       btn.addEventListener('click', () => {
         btn.style.transform = 'scale(0.97)';

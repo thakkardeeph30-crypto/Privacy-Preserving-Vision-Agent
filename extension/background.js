@@ -26,7 +26,36 @@ let state = {
     totalActionsExecuted: 0,
     lastLatencyMs: 0
   },
-  vault: {} // Local storage vault: { [hostname]: { username, password, domain, updatedAt } }
+  vault: {}, // Local storage vault: { [hostname]: { username, password, domain, updatedAt } }
+  profileDatabase: {
+    personal: {
+      fullName: 'Alex Vance',
+      firstName: 'Alex',
+      lastName: 'Vance',
+      username: 'alex.vance'
+    },
+    contact: {
+      email: 'alex.vance@privacy-defense.io',
+      phone: '+1 (555) 349-2810',
+      altEmail: 'alex.personal@vault.local'
+    },
+    address: {
+      streetAddress: '742 Cyber Security Way',
+      apt: 'Suite 404',
+      city: 'San Francisco',
+      state: 'CA',
+      zipCode: '94105',
+      country: 'United States'
+    },
+    professional: {
+      company: 'Quantum Shield AI',
+      jobTitle: 'Principal Security Architect',
+      website: 'https://quantumshield.privacy'
+    },
+    custom: [
+      { key: 'employeeId', label: 'Employee ID', value: 'QS-8842' }
+    ]
+  }
 };
 
 // Initialize settings and offscreen document
@@ -43,11 +72,20 @@ chrome.runtime.onStartup.addListener(async () => {
 
 async function loadStoredState() {
   try {
-    const data = await chrome.storage.local.get(['settings', 'stats', 'isActive', 'vault']);
+    const data = await chrome.storage.local.get(['settings', 'stats', 'isActive', 'vault', 'profileDatabase']);
     if (data.settings) state.settings = { ...state.settings, ...data.settings };
     if (data.stats) state.stats = { ...state.stats, ...data.stats };
     if (typeof data.isActive === 'boolean') state.isActive = data.isActive;
     if (data.vault) state.vault = { ...data.vault };
+    if (data.profileDatabase) {
+      state.profileDatabase = {
+        personal: { ...state.profileDatabase.personal, ...(data.profileDatabase.personal || {}) },
+        contact: { ...state.profileDatabase.contact, ...(data.profileDatabase.contact || {}) },
+        address: { ...state.profileDatabase.address, ...(data.profileDatabase.address || {}) },
+        professional: { ...state.profileDatabase.professional, ...(data.profileDatabase.professional || {}) },
+        custom: Array.isArray(data.profileDatabase.custom) ? data.profileDatabase.custom : state.profileDatabase.custom
+      };
+    }
   } catch (err) {
     console.warn('[PrivacyScreen Agent] Error reading storage:', err);
   }
@@ -59,7 +97,8 @@ async function saveState() {
       settings: state.settings,
       stats: state.stats,
       isActive: state.isActive,
-      vault: state.vault
+      vault: state.vault,
+      profileDatabase: state.profileDatabase
     });
   } catch (err) {
     console.warn('[PrivacyScreen Agent] Error saving storage:', err);
@@ -165,6 +204,35 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     case 'AUTOFILL_LOGIN':
       handleAutofillLogin(request.data || {}, sendResponse);
       return true;
+
+    case 'GET_PROFILE_DATABASE':
+      sendResponse({ success: true, profile: state.profileDatabase });
+      return false;
+
+    case 'UPDATE_PROFILE_DATABASE': {
+      const updates = request.data || request.profile || {};
+      if (updates.personal) state.profileDatabase.personal = { ...state.profileDatabase.personal, ...updates.personal };
+      if (updates.contact) state.profileDatabase.contact = { ...state.profileDatabase.contact, ...updates.contact };
+      if (updates.address) state.profileDatabase.address = { ...state.profileDatabase.address, ...updates.address };
+      if (updates.professional) state.profileDatabase.professional = { ...state.profileDatabase.professional, ...updates.professional };
+      if (Array.isArray(updates.custom)) state.profileDatabase.custom = updates.custom;
+      saveState();
+      sendResponse({ success: true, profile: state.profileDatabase });
+      return false;
+    }
+
+    case 'CLEAR_PROFILE_DATABASE': {
+      state.profileDatabase = {
+        personal: { fullName: '', firstName: '', lastName: '', username: '' },
+        contact: { email: '', phone: '', altEmail: '' },
+        address: { streetAddress: '', apt: '', city: '', state: '', zipCode: '', country: '' },
+        professional: { company: '', jobTitle: '', website: '' },
+        custom: []
+      };
+      saveState();
+      sendResponse({ success: true, profile: state.profileDatabase });
+      return false;
+    }
 
     case 'PING_SERVER':
       checkServerHealth().then(sendResponse);
@@ -373,6 +441,57 @@ async function handleScreenProcessing(data, sendResponse) {
       return;
     }
 
+    // Check if user requested form filling from Profile Database
+    if (taskLower.includes('fill') && (taskLower.includes('form') || taskLower.includes('profile') || taskLower.includes('registration') || taskLower.includes('detail') || taskLower.includes('contact') || taskLower.includes('address'))) {
+      const scanData = await new Promise((resolve) => {
+        chrome.tabs.sendMessage(activeTab.id, { action: 'SCAN_PAGE_FORMS' }, (r) => resolve(r || { fields: [] }));
+      });
+
+      const flatProfile = {
+        ...state.profileDatabase.personal,
+        ...state.profileDatabase.contact,
+        ...state.profileDatabase.address,
+        ...state.profileDatabase.professional
+      };
+      (state.profileDatabase.custom || []).forEach((c) => {
+        if (c.key && c.value) flatProfile[c.key] = c.value;
+      });
+
+      const fieldsToFill = [];
+      (scanData.fields || []).forEach((f) => {
+        if (flatProfile[f.key]) {
+          fieldsToFill.push({ selector: f.selector, value: flatProfile[f.key], key: f.key });
+        }
+      });
+
+      if (fieldsToFill.length > 0) {
+        const fillRes = await new Promise((resolve) => {
+          chrome.tabs.sendMessage(
+            activeTab.id,
+            { action: 'AUTOFILL_FORM_FIELDS', fields: fieldsToFill, autoSubmit: false },
+            (r) => resolve(r || { success: true })
+          );
+        });
+
+        const latency = Date.now() - startTime;
+        state.stats.lastLatencyMs = latency;
+        state.stats.totalActionsExecuted += fieldsToFill.length;
+        saveState();
+
+        sendResponse({
+          success: true,
+          result: {
+            latencyMs: latency,
+            redactedCount: itemsRedacted,
+            actionsExecuted: [{ action: { type: 'openagent_fill_profile', fieldsFilled: fieldsToFill.length }, result: fillRes }],
+            confidence: 0.98,
+            description: `OpenAgent auto-filled ${fieldsToFill.length} fields from your secure on-device Profile Database.`
+          }
+        });
+        return;
+      }
+    }
+
     const serverPayload = {
       image: sanitizedScreenshot, // Guaranteed sanitized & anonymized
       task: taskPrompt,
@@ -454,7 +573,7 @@ async function ensureContentScript(tabId) {
     if (!isAlive) {
       await chrome.scripting.executeScript({
         target: { tabId },
-        files: ['privacy-filter.js', 'action-executor.js', 'content.js']
+        files: ['privacy-filter.js', 'action-executor.js', 'openagent-analyzer.js', 'content.js']
       });
     }
   } catch (e) {

@@ -36,6 +36,7 @@ try {
     'privacy-filter.js',
     'vision-processor.js',
     'action-executor.js',
+    'openagent-analyzer.js',
     'offscreen.html',
     'offscreen.js',
     'icons/icon16.png',

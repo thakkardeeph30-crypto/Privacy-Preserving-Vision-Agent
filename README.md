@@ -51,6 +51,7 @@ privacy-screen-agent/
 │   ├── privacy-filter.js     # PII detection & Canvas/DOM redaction engine
 │   ├── vision-processor.js   # Local ViT / DETR screen analysis coordinator
 │   ├── action-executor.js    # Browser action executor with holographic halos
+│   ├── openagent-analyzer.js # Semantic form classification & universal auth detector
 │   ├── offscreen.html        # Sandboxed offscreen document for heavy ML/Canvas
 │   ├── offscreen.js          # Offscreen ML runner (Transformers.js / WebGPU)
 │   └── icons/
@@ -63,15 +64,48 @@ privacy-screen-agent/
 │   ├── requirements.txt      # Python dependencies
 │   ├── Dockerfile            # Containerized server environment
 │   └── test_server.py        # Automated test suite for backend & PII audit
-├── test_page.html            # Interactive test harness with forms, login card & PII fields
+├── test_page.html            # Interactive test harness with forms, SSO, OTP & PII fields
 ├── test_privacy.js           # Automated test suite for privacy algorithms
 ├── test_vault.js             # Automated test suite for local credential storage & auto-login
+├── test_openagent.js         # Automated test suite for OpenAgent form & auth intelligence
 ├── build.js                  # Extension build & validation script
 ├── package.json              # NPM configuration and scripts
 └── README.md                 # Complete documentation
 ```
 
 ---
+
+## 🤖 OpenAgent AI: Form Layer, Info Box & Universal Auth
+
+PrivacyScreen Agent integrates **OpenAgent AI**, an on-device contextual form and authentication intelligence engine:
+
+### 1. In-Page Visual Form Layer
+- Scans any webpage and positions floating holographic badges (`[👤 Full Name]`, `[📧 Email]`, `[📱 Phone]`, `[🏠 Address]`, `[🔑 OTP]`) directly over detected fields.
+- Clicking any badge instantly focuses and highlights the corresponding field.
+- Badges with matching data in your local Profile Database glow emerald green with checkmarks (`✓`).
+- Toggle on/off anytime directly from the extension popup.
+
+### 2. Extension Form Info Box with Direct Fill
+- An interactive form inspector directly inside the extension popup.
+- Inspects all form fields on the active webpage, allowing you to review or modify values right inside the extension.
+- **1-Click Autofill**: Injects values into page inputs using native prototype property descriptors (`HTMLInputElement.prototype.value`) and bubbling events (`input`, `change`) to guarantee 100% compatibility with modern reactive frameworks (React, Vue, Angular, Svelte).
+- **Auto-Fill & Submit**: Injects values and automatically submits the form in a single action.
+
+### 3. Local Profile Database with Auto-Suggestions
+- An on-device database stored securely in `chrome.storage.local`.
+- Stores personal identity, contact details, address/location, professional info, and custom key-value attributes.
+- When visiting any webpage with forms, OpenAgent automatically matches fields against your Profile Database and shows a **"⚡ 1-Click Fill"** suggestion banner.
+- Any values entered in the Info Box can be saved directly back into your Profile Database with one click.
+- **Zero Cloud Exposure**: Your profile data never leaves your browser and is never sent to the vision server.
+
+### 4. Universal Authentication Methods Intelligence
+OpenAgent automatically detects and understands all modern authentication architectures on the active page:
+- **Social & Federated SSO**: Google Sign-In, GitHub, Apple, Microsoft, and Enterprise SAML/Okta buttons.
+- **Standard Password Login**: Username/Email + Password forms with Local Vault auto-fill.
+- **Multi-Step / Split Login**: Detects Step 1 (Identifier + "Next" / "Continue") followed by Step 2 (Password).
+- **OTP & 2FA Codes**: Recognizes single verification inputs as well as segmented 4-digit / 6-digit individual digit input blocks.
+- **Passwordless Magic Links**: Detects email-only magic link login forms.
+- **Passkeys & WebAuthn**: Recognizes FIDO2 biometric and hardware security key authentication.
 
 ## 🔐 Client-Side Credential Vault & 1-Click Auto-Login
 
@@ -240,7 +274,29 @@ Backend Test Results: 15 passed, 0 failed.
 🎉 All 14 Vault unit tests passed with 100% success!
 ```
 
-### 4. Performance Benchmarks
+### 4. OpenAgent AI Form & Universal Login Test (`node test_openagent.js`)
+```
+🧪 Running OpenAgent AI & Universal Login Tests...
+  ✅ PASS: Classifies full name by autocomplete="name"
+  ✅ PASS: Classifies first and last names by name attributes
+  ✅ PASS: Classifies email inputs by type="email" and name="e-mail"
+  ✅ PASS: Classifies phone inputs by type="tel" and placeholder
+  ✅ PASS: Classifies street address, city, state, zipCode
+  ✅ PASS: Classifies company and job title
+  ✅ PASS: Distinguishes password from confirm password
+  ✅ PASS: Classifies OTP and 2FA verification code inputs
+  ✅ PASS: Detects Social SSO buttons (Google, GitHub, Apple, Microsoft)
+  ✅ PASS: Detects Standard Password Login form
+  ✅ PASS: Detects Multi-Step / Split Login flow
+  ✅ PASS: Detects 6-digit segmented OTP inputs
+  ✅ PASS: Detects Magic Link Passwordless login
+  ✅ PASS: Detects Passkey / WebAuthn biometric login
+  ✅ PASS: Matches scanned fields with user Profile Database
+  ✅ PASS: Profile Database values are strictly omitted from vision payloads
+🎉 All 16 OpenAgent AI & Universal Login tests passed with 100% success!
+```
+
+### 5. Performance Benchmarks
 - **Average Redaction Latency**: < 45ms per frame on client canvas.
 - **End-to-End Cycle Time**: ~180ms - 420ms (well under the 5000ms SLA).
 - **Client Memory Footprint**: ~35MB - 65MB (well under the 500MB target).

@@ -45,6 +45,7 @@
         "privacy-filter.js",
         "action-executor.js",
         "vision-processor.js",
+        "openagent-analyzer.js",
         "offscreen.html",
         "offscreen.js",
         "icons/*"
