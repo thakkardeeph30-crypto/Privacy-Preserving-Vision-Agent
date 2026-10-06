@@ -38,32 +38,30 @@ let state = {
   },
   profileDatabase: {
     personal: {
-      fullName: 'Alex Vance',
-      firstName: 'Alex',
-      lastName: 'Vance',
-      username: 'alex.vance'
+      fullName: '',
+      firstName: '',
+      lastName: '',
+      username: ''
     },
     contact: {
-      email: 'alex.vance@privacy-defense.io',
-      phone: '+1 (555) 349-2810',
-      altEmail: 'alex.personal@vault.local'
+      email: '',
+      phone: '',
+      altEmail: ''
     },
     address: {
-      streetAddress: '742 Cyber Security Way',
-      apt: 'Suite 404',
-      city: 'San Francisco',
-      state: 'CA',
-      zipCode: '94105',
-      country: 'United States'
+      streetAddress: '',
+      apt: '',
+      city: '',
+      state: '',
+      zipCode: '',
+      country: ''
     },
     professional: {
-      company: 'Quantum Shield AI',
-      jobTitle: 'Principal Security Architect',
-      website: 'https://quantumshield.privacy'
+      company: '',
+      jobTitle: '',
+      website: ''
     },
-    custom: [
-      { key: 'employeeId', label: 'Employee ID', value: 'QS-8842' }
-    ]
+    custom: []
   }
 };
 
@@ -350,25 +348,41 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           break;
         }
 
-        const host = hostname || (url ? (() => { try { return new URL(url).hostname; } catch(e) { return url; } })() : 'website.local');
+        let host = hostname;
+        if (!host && url) {
+          try {
+            const parsed = new URL(url.includes('://') ? url : `https://${url}`);
+            host = parsed.hostname;
+          } catch(e) {
+            host = url;
+          }
+        }
+        if (!host) host = 'website.local';
+
         const rootDom = getRootDomain(host);
         const name = siteName || formatSiteName(host);
-        const fullUrl = url || (host.startsWith('http') ? host : `https://${host}`);
+        let fullUrl = url || (host.startsWith('http') ? host : `https://${host}`);
+        if (fullUrl && !fullUrl.startsWith('http://') && !fullUrl.startsWith('https://')) {
+          fullUrl = `https://${fullUrl}`;
+        }
 
         let targetEntry = null;
         if (id) {
           targetEntry = state.vaultList.find((e) => e.id === id);
+        } else {
+          // If no id, match by domain/host + username to update existing
+          targetEntry = state.vaultList.find((e) => (e.hostname === host || (rootDom && e.domain === rootDom)) && e.username === username);
         }
 
         if (targetEntry) {
           // Update existing entry
-          targetEntry.siteName = name;
-          targetEntry.url = fullUrl;
+          targetEntry.siteName = name || targetEntry.siteName;
+          targetEntry.url = fullUrl || targetEntry.url;
           targetEntry.hostname = host;
           targetEntry.domain = rootDom;
           targetEntry.username = username;
           targetEntry.password = password;
-          targetEntry.notes = notes || targetEntry.notes || '';
+          targetEntry.notes = notes !== undefined ? notes : (targetEntry.notes || '');
           targetEntry.updatedAt = Date.now();
         } else {
           // Create new entry
@@ -434,11 +448,13 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           const name = siteName || formatSiteName(host);
           const fullUrl = url || `https://${host}`;
 
-          // Check if an entry with this hostname + username already exists
-          let existing = state.vaultList.find((e) => e.hostname === host && e.username === username);
+          // Check if an entry with this hostname or root domain + username already exists
+          let existing = state.vaultList.find((e) => (e.hostname === host || (rootDom && e.domain === rootDom)) && e.username === username);
           if (existing) {
             existing.password = password;
             existing.updatedAt = Date.now();
+            existing.url = fullUrl || existing.url;
+            existing.siteName = name || existing.siteName;
           } else {
             state.vaultList.unshift({
               id: `cred_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
@@ -462,7 +478,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
       case 'GET_SITE_CREDENTIALS': {
         const { hostname } = request.data || {};
-        const cred = state.vaultList.find((e) => e.hostname === hostname) || state.vault[hostname] || null;
+        const rootDom = getRootDomain(hostname || '');
+        const cred = state.vaultList.find((e) => e.hostname === hostname || (rootDom && e.domain === rootDom)) || state.vault[hostname] || null;
         sendResponse({ success: true, credentials: cred });
         break;
       }

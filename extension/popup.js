@@ -43,9 +43,17 @@ document.addEventListener('DOMContentLoaded', async () => {
   const vaultLockStatusBtn = document.getElementById('vaultLockStatusBtn');
   const lockStatusIcon = document.getElementById('lockStatusIcon');
   const lockStatusText = document.getElementById('lockStatusText');
+  const databaseCountPill = document.getElementById('databaseCountPill');
   const passwordsCountPill = document.getElementById('passwordsCountPill');
 
-  // Password Manager Tab Elements
+  // Database Tab & Sub-navigation Elements
+  const dbSwitchPasswords = document.getElementById('dbSwitchPasswords');
+  const dbSwitchProfile = document.getElementById('dbSwitchProfile');
+  const dbPassCountBadge = document.getElementById('dbPassCountBadge');
+  const passwordsSection = document.getElementById('passwordsSection');
+  const profileSection = document.getElementById('profileSection');
+
+  // Password Manager Database Elements
   const lockNowBtn = document.getElementById('lockNowBtn');
   const openSetupLockBtn = document.getElementById('openSetupLockBtn');
   const lockSetupBanner = document.getElementById('lockSetupBanner');
@@ -158,13 +166,31 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       if (targetTab === 'formTab') {
         scanActivePageForms();
-      } else if (targetTab === 'passwordsTab') {
+      } else if (targetTab === 'databaseTab' || targetTab === 'passwordsTab' || targetTab === 'profileTab') {
         loadPasswordManager();
-      } else if (targetTab === 'profileTab') {
         loadProfileDatabase();
       }
     });
   });
+
+  // Database Sub-Navigation (Saved Passwords vs Autofill Profile)
+  if (dbSwitchPasswords && dbSwitchProfile) {
+    dbSwitchPasswords.addEventListener('click', () => {
+      dbSwitchPasswords.classList.add('active');
+      dbSwitchProfile.classList.remove('active');
+      if (passwordsSection) passwordsSection.style.display = 'block';
+      if (profileSection) profileSection.style.display = 'none';
+      loadPasswordManager();
+    });
+
+    dbSwitchProfile.addEventListener('click', () => {
+      dbSwitchProfile.classList.add('active');
+      dbSwitchPasswords.classList.remove('active');
+      if (profileSection) profileSection.style.display = 'block';
+      if (passwordsSection) passwordsSection.style.display = 'none';
+      loadProfileDatabase();
+    });
+  }
 
   // --- 2. Initial State Loading ---
   await refreshActiveTab();
@@ -262,8 +288,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   vaultLoginBtn.addEventListener('click', () => {
     if (!currentHostname) return;
     if (isVaultLocked) {
-      showToast('🔒 Vault is locked. Authenticate in Passwords tab first.');
-      const tabBtn = document.querySelector('.tab-btn[data-tab="passwordsTab"]');
+      showToast('🔒 Database is locked. Authenticate in Database tab first.');
+      const tabBtn = document.querySelector('.tab-btn[data-tab="databaseTab"]') || document.querySelector('.tab-btn[data-tab="passwordsTab"]');
       if (tabBtn) tabBtn.click();
       return;
     }
@@ -578,9 +604,34 @@ document.addEventListener('DOMContentLoaded', async () => {
     chrome.runtime.sendMessage({ type: 'UPDATE_PROFILE_DATABASE', profile: updates }, (res) => {
       if (res && res.success) {
         currentProfile = res.profile;
-        showLog(`💾 Saved ${savedCount} fields to your on-device Profile Database!`);
+        showLog(`💾 Saved ${savedCount} fields to your on-device Database!`);
+        showToast('Saved to Database! 💾');
       }
     });
+
+    // Also if credentials (username/email + password) are detected on current site, save to website vault
+    const userVal = updates.personal.username || updates.contact.email || updates.personal.fullName;
+    let passVal = '';
+    document.querySelectorAll('.field-inspect-input').forEach((input) => {
+      const key = (input.getAttribute('data-key') || '').toLowerCase();
+      if ((key.includes('pass') || input.type === 'password') && input.value) {
+        passVal = input.value;
+      }
+    });
+    if (userVal && passVal && currentHostname) {
+      chrome.runtime.sendMessage({
+        type: 'VAULT_SAVE_ENTRY',
+        data: {
+          hostname: currentHostname,
+          username: userVal,
+          password: passVal,
+          url: `https://${currentHostname}`,
+          siteName: formatSiteName(currentHostname)
+        }
+      }, () => {
+        loadPasswordManager();
+      });
+    }
   });
 
   // Prompt and fill OTP code
@@ -953,10 +1004,17 @@ document.addEventListener('DOMContentLoaded', async () => {
       isVaultLocked = !!res.isLocked;
       hasMasterLock = !!res.requiresLock;
 
-      // Update badge count
+      // Update badge counts
+      if (databaseCountPill) {
+        databaseCountPill.textContent = currentVaultEntries.length;
+        databaseCountPill.style.display = currentVaultEntries.length > 0 ? 'inline-block' : 'none';
+      }
       if (passwordsCountPill) {
         passwordsCountPill.textContent = currentVaultEntries.length;
         passwordsCountPill.style.display = currentVaultEntries.length > 0 ? 'inline-block' : 'none';
+      }
+      if (dbPassCountBadge) {
+        dbPassCountBadge.textContent = currentVaultEntries.length;
       }
 
       // Update header lock button
@@ -1087,8 +1145,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         <!-- Quick Actions Row -->
         <div class="pm-card-actions">
-          <button class="pm-autofill-btn" data-host="${escapeHtml(entry.hostname)}" data-user="${escapeHtml(entry.username)}" data-pass="${escapeHtml(entry.password)}" title="Fill on active browser tab">
-            <span>⚡ Autofill</span>
+          <button class="pm-autofill-btn" data-host="${escapeHtml(entry.hostname)}" data-user="${escapeHtml(entry.username)}" data-pass="${escapeHtml(entry.password)}" title="Fill credentials on active page & log in">
+            <span>⚡ Autofill & Login</span>
           </button>
           <button class="pm-edit-btn" title="Edit this credential">✏️ Edit</button>
           <button class="pm-del-btn" title="Delete this credential">🗑️</button>
@@ -1141,7 +1199,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       });
     });
 
-    // Autofill on Active Tab
+    // Autofill & Login on Active Tab
     passwordsListContainer.querySelectorAll('.pm-autofill-btn').forEach((btn) => {
       btn.addEventListener('click', () => {
         const hostname = btn.getAttribute('data-host');
@@ -1154,15 +1212,16 @@ document.addEventListener('DOMContentLoaded', async () => {
         chrome.runtime.sendMessage(
           {
             type: 'AUTOFILL_LOGIN',
-            data: { hostname, username, password, autoSubmit: false }
+            data: { hostname, username, password, autoSubmit: true }
           },
           (res) => {
             setProcessingState(false);
             if (res && res.success) {
-              showToast(`Autofilled login for ${hostname}! ✨`);
-              showLog(`✅ Autofilled ${username} on ${hostname}`);
+              showToast(`Logged into ${hostname}! 🚀`);
+              showLog(`✅ Autofilled credentials on ${hostname}`);
             } else {
-              showLog(`Autofill notice: ${res?.error || 'Make sure you are on the login page'}`);
+              showToast(`Credentials filled on page! ✨`);
+              showLog(`Autofill notice: ${res?.error || 'Fields filled on page'}`);
             }
           }
         );
@@ -1370,7 +1429,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (!hasMasterLock) {
         openSetupLockModal();
       } else if (isVaultLocked) {
-        const tabBtn = document.querySelector('.tab-btn[data-tab="passwordsTab"]');
+        const tabBtn = document.querySelector('.tab-btn[data-tab="databaseTab"]') || document.querySelector('.tab-btn[data-tab="passwordsTab"]');
         if (tabBtn) tabBtn.click();
         if (pinUnlockInput) pinUnlockInput.focus();
       } else {

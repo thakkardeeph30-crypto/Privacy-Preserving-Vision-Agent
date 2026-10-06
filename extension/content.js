@@ -170,16 +170,12 @@
     const { username, password, autoSubmit } = data;
     try {
       const passwordInput = document.querySelector('input[type="password"]');
-      if (!passwordInput) {
-        sendResponse({ success: false, error: 'Password input not found on page' });
-        return;
-      }
-
-      // Find username / email field preceding password or in form
       let usernameInput = null;
-      const form = passwordInput.closest('form');
-      if (form) {
-        usernameInput = form.querySelector('input[type="text"], input[type="email"], input[name*="user" i], input[name*="login" i], input[name*="email" i], input[id*="user" i], input[id*="email" i]');
+      if (passwordInput) {
+        const form = passwordInput.closest('form');
+        if (form) {
+          usernameInput = form.querySelector('input[type="text"], input[type="email"], input[name*="user" i], input[name*="login" i], input[name*="email" i], input[id*="user" i], input[id*="email" i]');
+        }
       }
       if (!usernameInput) {
         const allInputs = Array.from(document.querySelectorAll('input:not([type="hidden"]):not([type="password"])'));
@@ -189,6 +185,11 @@
           const id = (input.id || '').toLowerCase();
           return type === 'email' || type === 'text' || name.includes('user') || name.includes('email') || id.includes('user') || id.includes('email');
         });
+      }
+
+      if (!passwordInput && !usernameInput) {
+        sendResponse({ success: false, error: 'No login input fields found on page' });
+        return;
       }
 
       // Fill username
@@ -394,21 +395,37 @@
         captureCredentialsFromForm(form);
       }
     }, true);
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        const active = document.activeElement;
+        if (active && (active.type === 'password' || active.type === 'text' || active.type === 'email')) {
+          const form = active.closest('form') || document;
+          setTimeout(() => captureCredentialsFromForm(form), 100);
+        }
+      }
+    }, true);
   }
 
   function captureCredentialsFromForm(root) {
     if (promptDismissedForSession) return;
     try {
-      const passwordInput = root.querySelector ? root.querySelector('input[type="password"]') : null;
+      const passwordInput = (root && root.querySelector) ? root.querySelector('input[type="password"]') : document.querySelector('input[type="password"]');
       if (!passwordInput || !passwordInput.value) return;
 
       const password = passwordInput.value;
       let username = '';
 
-      const form = passwordInput.closest('form') || root;
+      const form = passwordInput.closest('form') || document;
       const usernameInput = form.querySelector ? form.querySelector('input[type="email"], input[type="text"], input[name*="user" i], input[name*="login" i], input[name*="email" i], input[id*="user" i], input[id*="email" i]') : null;
       if (usernameInput && usernameInput.value) {
         username = usernameInput.value.trim();
+      }
+
+      if (!username) {
+        const allInputs = Array.from(document.querySelectorAll('input[type="text"], input[type="email"]'));
+        const candidate = allInputs.find((i) => i.value && i.value.trim().length > 0);
+        if (candidate) username = candidate.value.trim();
       }
 
       if (!username || !password) return;
@@ -459,15 +476,15 @@
         <strong style="font-size: 13px; color: #38bdf8;">PrivacyScreen Agent</strong>
       </div>
       <div style="margin-bottom: 6px; font-weight: 500;">
-        Save credentials for <span style="color: #60a5fa; font-weight: 600;">${hostname}</span> in local storage?
+        Save credentials for <span style="color: #60a5fa; font-weight: 600;">${hostname}</span> to Extension Database?
       </div>
       <div style="font-size: 11.5px; color: #94a3b8; margin-bottom: 12px; background: rgba(255,255,255,0.05); padding: 6px 8px; border-radius: 6px;">
         User: <b style="color: #f1f5f9;">${username}</b><br/>
-        🔒 Stored only in your browser. Never sent to any server.
+        🗄️ Stored permanently in your on-device database. You can view, copy, or autofill it anytime.
       </div>
       <div style="display: flex; gap: 8px;">
         <button id="privacy-cred-save-btn" style="flex: 1; background: linear-gradient(135deg, #0284c7, #2563eb); color: #fff; border: none; border-radius: 6px; padding: 7px 12px; font-weight: 600; font-size: 12px; cursor: pointer;">
-          Save
+          💾 Save to Database
         </button>
         <button id="privacy-cred-dismiss-btn" style="background: rgba(255,255,255,0.08); color: #94a3b8; border: 1px solid rgba(255,255,255,0.12); border-radius: 6px; padding: 7px 12px; font-size: 12px; cursor: pointer;">
           Not Now
@@ -490,7 +507,7 @@
       }, () => {
         banner.remove();
         if (actionExecutor) {
-          actionExecutor.showFloatingBadge(`🛡️ Credentials saved in local storage for ${hostname}`);
+          actionExecutor.showFloatingBadge(`🗄️ Saved to Extension Database for ${hostname}`);
         }
       });
     });
