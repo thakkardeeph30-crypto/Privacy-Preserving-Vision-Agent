@@ -7,8 +7,7 @@
   "scripts": {
     "build": "node build.js",
     "lint": "echo 'Validating manifest and scripts...' && node -e \"JSON.parse(require('fs').readFileSync('extension/manifest.json'))\"",
-    "start:server": "uvicorn server.app:app --host 0.0.0.0 --port 8000 --reload",
-    "test": "node test_privacy.js && python3 server/test_server.py"
+    "test": "node test_privacy.js && node test_openagent.js && node test_vault.js && node test_auth_vault.js"
   },
   "keywords": [
     "chrome-extension",

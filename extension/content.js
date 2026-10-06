@@ -480,7 +480,13 @@
     document.getElementById('privacy-cred-save-btn').addEventListener('click', () => {
       chrome.runtime.sendMessage({
         type: 'SAVE_SITE_CREDENTIALS',
-        data: { hostname, username, password }
+        data: {
+          hostname,
+          username,
+          password,
+          url: window.location.href,
+          siteName: document.title ? document.title.split(/[-|•—]/)[0].trim() : hostname
+        }
       }, () => {
         banner.remove();
         if (actionExecutor) {

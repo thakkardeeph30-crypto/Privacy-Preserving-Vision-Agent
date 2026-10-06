@@ -26,7 +26,16 @@ let state = {
     totalActionsExecuted: 0,
     lastLatencyMs: 0
   },
-  vault: {}, // Local storage vault: { [hostname]: { username, password, domain, updatedAt } }
+  vaultList: [], // Google Password Manager style list: [{ id, siteName, hostname, domain, url, username, password, createdAt, updatedAt }]
+  vault: {},     // Legacy map for backward compatibility: { [hostname]: { username, password, domain, updatedAt } }
+  authConfig: {
+    hasMasterPin: false,
+    pinSalt: '',
+    pinHash: '',
+    biometricsEnabled: false,
+    biometricCredentialId: '',
+    autoLockMinutes: 15
+  },
   profileDatabase: {
     personal: {
       fullName: 'Alex Vance',
@@ -58,25 +67,124 @@ let state = {
   }
 };
 
-// Initialize settings and offscreen document
+// In-memory session unlock state
+let sessionLockState = {
+  isUnlocked: false,
+  unlockedAt: 0
+};
+
+// Asynchronous initialization mutex to guarantee MV3 worker is fully loaded from disk before handling messages
+let isStateLoaded = false;
+let stateInitPromise = null;
+
+async function ensureStateLoaded() {
+  if (isStateLoaded) return state;
+  if (!stateInitPromise) {
+    stateInitPromise = (async () => {
+      await loadStoredState();
+      isStateLoaded = true;
+      return state;
+    })();
+  }
+  return stateInitPromise;
+}
+
+// Lifecycle listeners
 chrome.runtime.onInstalled.addListener(async () => {
   console.log('[PrivacyScreen Agent] Extension installed.');
-  await loadStoredState();
+  await ensureStateLoaded();
   await setupOffscreenDocument();
 });
 
 chrome.runtime.onStartup.addListener(async () => {
-  await loadStoredState();
+  await ensureStateLoaded();
   await setupOffscreenDocument();
 });
 
+function formatSiteName(hostname) {
+  if (!hostname) return 'Website';
+  let clean = hostname.replace(/^www\./, '').split(':')[0];
+  const parts = clean.split('.');
+  if (parts.length > 1) {
+    const main = parts[parts.length - 2];
+    return main.charAt(0).toUpperCase() + main.slice(1);
+  }
+  return clean.charAt(0).toUpperCase() + clean.slice(1);
+}
+
+function getRootDomain(hostname) {
+  if (!hostname) return '';
+  const clean = hostname.replace(/^www\./, '').split(':')[0];
+  const parts = clean.split('.');
+  if (parts.length >= 2) {
+    return parts.slice(-2).join('.');
+  }
+  return clean;
+}
+
+function syncLegacyVault() {
+  state.vault = {};
+  if (Array.isArray(state.vaultList)) {
+    for (const item of state.vaultList) {
+      if (item && item.hostname) {
+        state.vault[item.hostname] = {
+          username: item.username || '',
+          password: item.password || '',
+          domain: item.hostname,
+          updatedAt: item.updatedAt || Date.now()
+        };
+      }
+    }
+  }
+}
+
 async function loadStoredState() {
   try {
-    const data = await chrome.storage.local.get(['settings', 'stats', 'isActive', 'vault', 'profileDatabase']);
+    const data = await chrome.storage.local.get([
+      'settings',
+      'stats',
+      'isActive',
+      'vault',
+      'privacy_agent_vault_v2',
+      'privacy_agent_auth',
+      'profileDatabase'
+    ]);
+
     if (data.settings) state.settings = { ...state.settings, ...data.settings };
     if (data.stats) state.stats = { ...state.stats, ...data.stats };
     if (typeof data.isActive === 'boolean') state.isActive = data.isActive;
-    if (data.vault) state.vault = { ...data.vault };
+
+    // Load auth lock configuration
+    if (data.privacy_agent_auth) {
+      state.authConfig = { ...state.authConfig, ...data.privacy_agent_auth };
+    }
+
+    // Load v2 credential database or migrate from legacy v1 vault
+    if (Array.isArray(data.privacy_agent_vault_v2)) {
+      state.vaultList = data.privacy_agent_vault_v2;
+    } else if (data.vault && typeof data.vault === 'object') {
+      const migrated = Object.keys(data.vault).map((host) => {
+        const item = data.vault[host] || {};
+        return {
+          id: `cred_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+          siteName: formatSiteName(host),
+          hostname: host,
+          domain: getRootDomain(host),
+          url: `https://${host}`,
+          username: item.username || '',
+          password: item.password || '',
+          createdAt: item.updatedAt || Date.now(),
+          updatedAt: item.updatedAt || Date.now()
+        };
+      });
+      state.vaultList = migrated;
+      await chrome.storage.local.set({ privacy_agent_vault_v2: state.vaultList });
+    } else {
+      state.vaultList = [];
+    }
+
+    syncLegacyVault();
+
     if (data.profileDatabase) {
       state.profileDatabase = {
         personal: { ...state.profileDatabase.personal, ...(data.profileDatabase.personal || {}) },
@@ -91,17 +199,63 @@ async function loadStoredState() {
   }
 }
 
+async function saveVault() {
+  syncLegacyVault();
+  try {
+    await chrome.storage.local.set({
+      privacy_agent_vault_v2: state.vaultList,
+      vault: state.vault
+    });
+  } catch (err) {
+    console.warn('[PrivacyScreen Agent] Error saving vault:', err);
+  }
+}
+
 async function saveState() {
+  syncLegacyVault();
   try {
     await chrome.storage.local.set({
       settings: state.settings,
       stats: state.stats,
       isActive: state.isActive,
+      privacy_agent_vault_v2: state.vaultList,
       vault: state.vault,
+      privacy_agent_auth: state.authConfig,
       profileDatabase: state.profileDatabase
     });
   } catch (err) {
     console.warn('[PrivacyScreen Agent] Error saving storage:', err);
+  }
+}
+
+async function getSessionUnlockState() {
+  if (chrome.storage && chrome.storage.session) {
+    try {
+      const sess = await chrome.storage.session.get(['isUnlocked', 'unlockedAt']);
+      if (sess && sess.isUnlocked) {
+        const timeoutMs = (state.authConfig.autoLockMinutes || 15) * 60 * 1000;
+        if (Date.now() - (sess.unlockedAt || 0) < timeoutMs) {
+          return true;
+        } else {
+          await chrome.storage.session.set({ isUnlocked: false });
+          sessionLockState.isUnlocked = false;
+        }
+      }
+    } catch (e) {}
+  }
+  return sessionLockState.isUnlocked;
+}
+
+async function setSessionUnlockState(unlocked) {
+  sessionLockState.isUnlocked = !!unlocked;
+  sessionLockState.unlockedAt = unlocked ? Date.now() : 0;
+  if (chrome.storage && chrome.storage.session) {
+    try {
+      await chrome.storage.session.set({
+        isUnlocked: !!unlocked,
+        unlockedAt: unlocked ? Date.now() : 0
+      });
+    } catch (e) {}
   }
 }
 
@@ -126,121 +280,323 @@ async function setupOffscreenDocument() {
   }
 }
 
-// Global message bus
+// Global message bus with guaranteed initialization
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   const type = request.type || request.action;
 
-  switch (type) {
-    case 'GET_STATE':
-      sendResponse({ state });
-      return false;
+  (async () => {
+    await ensureStateLoaded();
 
-    case 'TOGGLE_AGENT':
-      state.isActive = !state.isActive;
-      saveState();
-      notifyActiveTab(state.isActive ? 'ACTIVATE' : 'DEACTIVATE', { settings: state.settings });
-      sendResponse({ isActive: state.isActive });
-      return false;
-
-    case 'UPDATE_SETTINGS':
-      if (request.settings) {
-        state.settings = { ...state.settings, ...request.settings };
-        saveState();
-        notifyActiveTab('ACTIVATE', { settings: state.settings });
+    switch (type) {
+      case 'GET_STATE': {
+        const isUnlocked = await getSessionUnlockState();
+        sendResponse({
+          state: {
+            ...state,
+            isLocked: state.authConfig.hasMasterPin && !isUnlocked
+          }
+        });
+        break;
       }
-      sendResponse({ success: true, settings: state.settings });
-      return false;
 
-    case 'PROCESS_SCREEN':
-      handleScreenProcessing(request.data || {}, sendResponse);
-      return true; // Keep async channel open
+      case 'TOGGLE_AGENT': {
+        state.isActive = !state.isActive;
+        await saveState();
+        notifyActiveTab(state.isActive ? 'ACTIVATE' : 'DEACTIVATE', { settings: state.settings });
+        sendResponse({ isActive: state.isActive });
+        break;
+      }
 
-    case 'SAVE_SITE_CREDENTIALS': {
-      const { hostname, username, password } = request.data || {};
-      if (hostname && username && password) {
-        state.vault[hostname] = {
-          username,
-          password,
-          domain: hostname,
-          updatedAt: Date.now()
+      case 'UPDATE_SETTINGS': {
+        if (request.settings) {
+          state.settings = { ...state.settings, ...request.settings };
+          await saveState();
+          notifyActiveTab('ACTIVATE', { settings: state.settings });
+        }
+        sendResponse({ success: true, settings: state.settings });
+        break;
+      }
+
+      case 'PROCESS_SCREEN': {
+        handleScreenProcessing(request.data || {}, sendResponse);
+        return; // handleScreenProcessing handles sendResponse
+      }
+
+      // --- Google Password Manager Database Handlers ---
+      case 'VAULT_GET_ALL': {
+        const isUnlocked = await getSessionUnlockState();
+        const requiresLock = state.authConfig.hasMasterPin || state.authConfig.biometricsEnabled;
+        const isLocked = requiresLock && !isUnlocked;
+
+        // If locked and not requested for internal verification, mask passwords
+        const entries = state.vaultList.map((entry) => ({
+          ...entry,
+          password: isLocked ? '••••••••' : entry.password
+        }));
+
+        sendResponse({
+          success: true,
+          isLocked,
+          requiresLock,
+          entries
+        });
+        break;
+      }
+
+      case 'VAULT_SAVE_ENTRY': {
+        const { id, siteName, url, hostname, username, password, notes } = request.data || {};
+        if (!username || !password) {
+          sendResponse({ success: false, error: 'Username and password are required' });
+          break;
+        }
+
+        const host = hostname || (url ? (() => { try { return new URL(url).hostname; } catch(e) { return url; } })() : 'website.local');
+        const rootDom = getRootDomain(host);
+        const name = siteName || formatSiteName(host);
+        const fullUrl = url || (host.startsWith('http') ? host : `https://${host}`);
+
+        let targetEntry = null;
+        if (id) {
+          targetEntry = state.vaultList.find((e) => e.id === id);
+        }
+
+        if (targetEntry) {
+          // Update existing entry
+          targetEntry.siteName = name;
+          targetEntry.url = fullUrl;
+          targetEntry.hostname = host;
+          targetEntry.domain = rootDom;
+          targetEntry.username = username;
+          targetEntry.password = password;
+          targetEntry.notes = notes || targetEntry.notes || '';
+          targetEntry.updatedAt = Date.now();
+        } else {
+          // Create new entry
+          const newEntry = {
+            id: id || `cred_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+            siteName: name,
+            url: fullUrl,
+            hostname: host,
+            domain: rootDom,
+            username,
+            password,
+            notes: notes || '',
+            createdAt: Date.now(),
+            updatedAt: Date.now()
+          };
+          state.vaultList.unshift(newEntry);
+          targetEntry = newEntry;
+        }
+
+        await saveVault();
+        sendResponse({ success: true, entry: targetEntry, message: `Saved credentials for ${name}` });
+        break;
+      }
+
+      case 'VAULT_DELETE_ENTRY': {
+        const { id, hostname } = request.data || {};
+        const beforeLen = state.vaultList.length;
+        if (id) {
+          state.vaultList = state.vaultList.filter((e) => e.id !== id);
+        } else if (hostname) {
+          state.vaultList = state.vaultList.filter((e) => e.hostname !== hostname);
+        }
+        if (state.vaultList.length < beforeLen) {
+          await saveVault();
+          sendResponse({ success: true, message: 'Credential entry deleted' });
+        } else {
+          sendResponse({ success: false, error: 'Entry not found' });
+        }
+        break;
+      }
+
+      case 'VAULT_GET_FOR_URL': {
+        const targetUrl = request.url || request.data?.url || '';
+        const targetHost = request.hostname || request.data?.hostname || (targetUrl ? (() => { try { return new URL(targetUrl).hostname; } catch(e) { return ''; } })() : '');
+        const targetDomain = getRootDomain(targetHost);
+
+        const matches = state.vaultList.filter((e) => {
+          if (targetHost && e.hostname === targetHost) return true;
+          if (targetDomain && e.domain === targetDomain) return true;
+          return false;
+        });
+
+        sendResponse({ success: true, matches });
+        break;
+      }
+
+      // Legacy Vault Handlers for Content Script & Existing Endpoints
+      case 'SAVE_SITE_CREDENTIALS': {
+        const { hostname, username, password, url, siteName } = request.data || {};
+        if (hostname && username && password) {
+          const host = hostname;
+          const rootDom = getRootDomain(host);
+          const name = siteName || formatSiteName(host);
+          const fullUrl = url || `https://${host}`;
+
+          // Check if an entry with this hostname + username already exists
+          let existing = state.vaultList.find((e) => e.hostname === host && e.username === username);
+          if (existing) {
+            existing.password = password;
+            existing.updatedAt = Date.now();
+          } else {
+            state.vaultList.unshift({
+              id: `cred_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+              siteName: name,
+              url: fullUrl,
+              hostname: host,
+              domain: rootDom,
+              username,
+              password,
+              createdAt: Date.now(),
+              updatedAt: Date.now()
+            });
+          }
+          await saveVault();
+          sendResponse({ success: true, message: `Credentials saved locally for ${hostname}` });
+        } else {
+          sendResponse({ success: false, error: 'Missing hostname, username, or password' });
+        }
+        break;
+      }
+
+      case 'GET_SITE_CREDENTIALS': {
+        const { hostname } = request.data || {};
+        const cred = state.vaultList.find((e) => e.hostname === hostname) || state.vault[hostname] || null;
+        sendResponse({ success: true, credentials: cred });
+        break;
+      }
+
+      case 'GET_ALL_SAVED_SITES': {
+        const sites = state.vaultList.map((entry) => ({
+          id: entry.id,
+          siteName: entry.siteName,
+          domain: entry.hostname,
+          url: entry.url,
+          username: entry.username,
+          updatedAt: entry.updatedAt
+        }));
+        sendResponse({ success: true, sites });
+        break;
+      }
+
+      case 'DELETE_SITE_CREDENTIALS': {
+        const { hostname } = request.data || {};
+        const beforeLen = state.vaultList.length;
+        state.vaultList = state.vaultList.filter((e) => e.hostname !== hostname);
+        if (state.vaultList.length < beforeLen || state.vault[hostname]) {
+          await saveVault();
+          sendResponse({ success: true, message: `Removed credentials for ${hostname}` });
+        } else {
+          sendResponse({ success: false, error: 'Domain not found in vault' });
+        }
+        break;
+      }
+
+      // --- Security Lock & Biometrics Handlers ---
+      case 'AUTH_GET_STATUS': {
+        const isUnlocked = await getSessionUnlockState();
+        sendResponse({
+          success: true,
+          hasMasterPin: !!state.authConfig.hasMasterPin,
+          pinSalt: state.authConfig.pinSalt,
+          biometricsEnabled: !!state.authConfig.biometricsEnabled,
+          biometricCredentialId: state.authConfig.biometricCredentialId || '',
+          autoLockMinutes: state.authConfig.autoLockMinutes || 15,
+          isUnlocked
+        });
+        break;
+      }
+
+      case 'AUTH_SETUP_LOCK': {
+        const { pinSalt, pinHash, biometricsEnabled, biometricCredentialId } = request.data || {};
+        state.authConfig = {
+          ...state.authConfig,
+          hasMasterPin: !!pinHash,
+          pinSalt: pinSalt || '',
+          pinHash: pinHash || '',
+          biometricsEnabled: !!biometricsEnabled,
+          biometricCredentialId: biometricCredentialId || ''
         };
-        saveState();
-        sendResponse({ success: true, message: `Credentials saved locally for ${hostname}` });
-      } else {
-        sendResponse({ success: false, error: 'Missing hostname, username, or password' });
+        await saveState();
+        await setSessionUnlockState(true);
+        sendResponse({ success: true, message: 'Vault security lock configured successfully' });
+        break;
       }
-      return false;
-    }
 
-    case 'GET_SITE_CREDENTIALS': {
-      const { hostname } = request.data || {};
-      const cred = state.vault[hostname] || null;
-      sendResponse({ success: true, credentials: cred });
-      return false;
-    }
-
-    case 'GET_ALL_SAVED_SITES': {
-      const sites = Object.keys(state.vault).map(host => ({
-        domain: host,
-        username: state.vault[host].username,
-        updatedAt: state.vault[host].updatedAt
-      }));
-      sendResponse({ success: true, sites });
-      return false;
-    }
-
-    case 'DELETE_SITE_CREDENTIALS': {
-      const { hostname } = request.data || {};
-      if (state.vault[hostname]) {
-        delete state.vault[hostname];
-        saveState();
-        sendResponse({ success: true, message: `Removed credentials for ${hostname}` });
-      } else {
-        sendResponse({ success: false, error: 'Domain not found in vault' });
+      case 'AUTH_VERIFY_PIN': {
+        const { pinHash } = request.data || {};
+        if (pinHash && pinHash === state.authConfig.pinHash) {
+          await setSessionUnlockState(true);
+          sendResponse({ success: true, valid: true });
+        } else {
+          sendResponse({ success: false, valid: false, error: 'Incorrect PIN or passcode' });
+        }
+        break;
       }
-      return false;
+
+      case 'AUTH_SET_UNLOCKED': {
+        await setSessionUnlockState(request.unlocked !== false);
+        sendResponse({ success: true, isUnlocked: await getSessionUnlockState() });
+        break;
+      }
+
+      case 'AUTH_LOCK_NOW': {
+        await setSessionUnlockState(false);
+        sendResponse({ success: true, isUnlocked: false });
+        break;
+      }
+
+      case 'AUTOFILL_LOGIN': {
+        handleAutofillLogin(request.data || {}, sendResponse);
+        return; // handleAutofillLogin handles sendResponse
+      }
+
+      case 'GET_PROFILE_DATABASE': {
+        sendResponse({ success: true, profile: state.profileDatabase });
+        break;
+      }
+
+      case 'UPDATE_PROFILE_DATABASE': {
+        const updates = request.data || request.profile || {};
+        if (updates.personal) state.profileDatabase.personal = { ...state.profileDatabase.personal, ...updates.personal };
+        if (updates.contact) state.profileDatabase.contact = { ...state.profileDatabase.contact, ...updates.contact };
+        if (updates.address) state.profileDatabase.address = { ...state.profileDatabase.address, ...updates.address };
+        if (updates.professional) state.profileDatabase.professional = { ...state.profileDatabase.professional, ...updates.professional };
+        if (Array.isArray(updates.custom)) state.profileDatabase.custom = updates.custom;
+        await saveState();
+        sendResponse({ success: true, profile: state.profileDatabase });
+        break;
+      }
+
+      case 'CLEAR_PROFILE_DATABASE': {
+        state.profileDatabase = {
+          personal: { fullName: '', firstName: '', lastName: '', username: '' },
+          contact: { email: '', phone: '', altEmail: '' },
+          address: { streetAddress: '', apt: '', city: '', state: '', zipCode: '', country: '' },
+          professional: { company: '', jobTitle: '', website: '' },
+          custom: []
+        };
+        await saveState();
+        sendResponse({ success: true, profile: state.profileDatabase });
+        break;
+      }
+
+      case 'PING_SERVER': {
+        checkServerHealth().then(sendResponse);
+        return;
+      }
+
+      default:
+        sendResponse({ error: `Unknown background message: ${type}` });
+        break;
     }
+  })().catch((err) => {
+    console.error('[PrivacyScreen Agent] Error processing message:', err);
+    sendResponse({ success: false, error: err.message });
+  });
 
-    case 'AUTOFILL_LOGIN':
-      handleAutofillLogin(request.data || {}, sendResponse);
-      return true;
-
-    case 'GET_PROFILE_DATABASE':
-      sendResponse({ success: true, profile: state.profileDatabase });
-      return false;
-
-    case 'UPDATE_PROFILE_DATABASE': {
-      const updates = request.data || request.profile || {};
-      if (updates.personal) state.profileDatabase.personal = { ...state.profileDatabase.personal, ...updates.personal };
-      if (updates.contact) state.profileDatabase.contact = { ...state.profileDatabase.contact, ...updates.contact };
-      if (updates.address) state.profileDatabase.address = { ...state.profileDatabase.address, ...updates.address };
-      if (updates.professional) state.profileDatabase.professional = { ...state.profileDatabase.professional, ...updates.professional };
-      if (Array.isArray(updates.custom)) state.profileDatabase.custom = updates.custom;
-      saveState();
-      sendResponse({ success: true, profile: state.profileDatabase });
-      return false;
-    }
-
-    case 'CLEAR_PROFILE_DATABASE': {
-      state.profileDatabase = {
-        personal: { fullName: '', firstName: '', lastName: '', username: '' },
-        contact: { email: '', phone: '', altEmail: '' },
-        address: { streetAddress: '', apt: '', city: '', state: '', zipCode: '', country: '' },
-        professional: { company: '', jobTitle: '', website: '' },
-        custom: []
-      };
-      saveState();
-      sendResponse({ success: true, profile: state.profileDatabase });
-      return false;
-    }
-
-    case 'PING_SERVER':
-      checkServerHealth().then(sendResponse);
-      return true;
-
-    default:
-      return false;
-  }
+  return true; // Keep async response channel open for all messages
 });
 
 async function handleAutofillLogin(data, sendResponse) {
@@ -248,12 +604,17 @@ async function handleAutofillLogin(data, sendResponse) {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tab || !tab.id) throw new Error('No active browser tab found.');
 
-    const urlObj = new URL(tab.url);
-    const hostname = data.hostname || urlObj.hostname;
-    const cred = state.vault[hostname];
+    let hostname = data.hostname || '';
+    if (!hostname && tab.url) {
+      try { hostname = new URL(tab.url).hostname; } catch(e) {}
+    }
 
-    if (!cred) {
-      throw new Error(`No saved credentials found in local storage for ${hostname}`);
+    const cred = state.vaultList.find((e) => e.hostname === hostname) || state.vault[hostname];
+    const username = data.username || cred?.username;
+    const password = data.password || cred?.password;
+
+    if (!username || !password) {
+      throw new Error(`No saved credentials found in local storage for ${hostname || 'this site'}`);
     }
 
     await ensureContentScript(tab.id);
@@ -262,8 +623,8 @@ async function handleAutofillLogin(data, sendResponse) {
       tab.id,
       {
         action: 'AUTOFILL_AND_LOGIN',
-        username: cred.username,
-        password: cred.password,
+        username,
+        password,
         autoSubmit: data.autoSubmit !== false
       },
       (res) => {

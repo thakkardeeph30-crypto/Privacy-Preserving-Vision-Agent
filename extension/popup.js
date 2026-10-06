@@ -39,6 +39,59 @@ document.addEventListener('DOMContentLoaded', async () => {
   const vaultList = document.getElementById('vaultList');
   const vaultCountTag = document.getElementById('vaultCountTag');
 
+  // Header Lock Button & Indicator
+  const vaultLockStatusBtn = document.getElementById('vaultLockStatusBtn');
+  const lockStatusIcon = document.getElementById('lockStatusIcon');
+  const lockStatusText = document.getElementById('lockStatusText');
+  const passwordsCountPill = document.getElementById('passwordsCountPill');
+
+  // Password Manager Tab Elements
+  const lockNowBtn = document.getElementById('lockNowBtn');
+  const openSetupLockBtn = document.getElementById('openSetupLockBtn');
+  const lockSetupBanner = document.getElementById('lockSetupBanner');
+  const openLockSetupBtn = document.getElementById('openLockSetupBtn');
+  const vaultLockScreen = document.getElementById('vaultLockScreen');
+  const biometricUnlockBtn = document.getElementById('biometricUnlockBtn');
+  const biometricBtnLabel = document.getElementById('biometricBtnLabel');
+  const pinUnlockInput = document.getElementById('pinUnlockInput');
+  const pinUnlockBtn = document.getElementById('pinUnlockBtn');
+  const pinErrorMsg = document.getElementById('pinErrorMsg');
+  const vaultUnlockedView = document.getElementById('vaultUnlockedView');
+  const passwordSearchInput = document.getElementById('passwordSearchInput');
+  const clearSearchBtn = document.getElementById('clearSearchBtn');
+  const addPasswordBtn = document.getElementById('addPasswordBtn');
+  const savedPasswordsCountText = document.getElementById('savedPasswordsCountText');
+  const refreshVaultBtn = document.getElementById('refreshVaultBtn');
+  const passwordsListContainer = document.getElementById('passwordsListContainer');
+
+  // Add/Edit Credential Modal Elements
+  const credentialModal = document.getElementById('credentialModal');
+  const credModalTitle = document.getElementById('credModalTitle');
+  const closeCredModalBtn = document.getElementById('closeCredModalBtn');
+  const credEditId = document.getElementById('credEditId');
+  const credSiteNameInput = document.getElementById('credSiteNameInput');
+  const credUrlInput = document.getElementById('credUrlInput');
+  const credUsernameInput = document.getElementById('credUsernameInput');
+  const credPasswordInput = document.getElementById('credPasswordInput');
+  const generateStrongPassBtn = document.getElementById('generateStrongPassBtn');
+  const toggleCredPassVisibilityBtn = document.getElementById('toggleCredPassVisibilityBtn');
+  const credNotesInput = document.getElementById('credNotesInput');
+  const saveCredentialBtn = document.getElementById('saveCredentialBtn');
+  const cancelCredentialBtn = document.getElementById('cancelCredentialBtn');
+
+  // Lock Setup Modal Elements
+  const lockSetupModal = document.getElementById('lockSetupModal');
+  const closeLockSetupModalBtn = document.getElementById('closeLockSetupModalBtn');
+  const setupPinInput = document.getElementById('setupPinInput');
+  const setupPinConfirmInput = document.getElementById('setupPinConfirmInput');
+  const setupEnableBiometrics = document.getElementById('setupEnableBiometrics');
+  const setupErrorMsg = document.getElementById('setupErrorMsg');
+  const confirmLockSetupBtn = document.getElementById('confirmLockSetupBtn');
+
+  // Copy Toast Elements
+  const copyToast = document.getElementById('copyToast');
+  const copyToastText = document.getElementById('copyToastText');
+
   // Form Info Box Elements
   const formSummaryText = document.getElementById('formSummaryText');
   const toggleVisualLayerBtn = document.getElementById('toggleVisualLayerBtn');
@@ -82,6 +135,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   let currentProfile = null;
   let detectedFields = [];
   let isVisualLayerOn = false;
+  let currentVaultEntries = [];
+  let isVaultLocked = false;
+  let hasMasterLock = false;
 
   // --- 1. Tab Navigation ---
   tabButtons.forEach((btn) => {
@@ -102,6 +158,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       if (targetTab === 'formTab') {
         scanActivePageForms();
+      } else if (targetTab === 'passwordsTab') {
+        loadPasswordManager();
       } else if (targetTab === 'profileTab') {
         loadProfileDatabase();
       }
@@ -114,6 +172,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   await checkServerStatus();
   await checkModelStatus();
   await checkActiveSiteVault();
+  await loadPasswordManager();
   await loadProfileDatabase();
   // Pre-scan for badge count in background
   scanActivePageForms(false);
@@ -202,6 +261,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   // --- 8. Vault Auto-Login Quick Action ---
   vaultLoginBtn.addEventListener('click', () => {
     if (!currentHostname) return;
+    if (isVaultLocked) {
+      showToast('🔒 Vault is locked. Authenticate in Passwords tab first.');
+      const tabBtn = document.querySelector('.tab-btn[data-tab="passwordsTab"]');
+      if (tabBtn) tabBtn.click();
+      return;
+    }
     setProcessingState(true);
     showLog(`🔑 Autofilling & logging into ${currentHostname}...`);
 
@@ -732,12 +797,699 @@ document.addEventListener('DOMContentLoaded', async () => {
     );
   }
 
+  // =========================================================================
+  // --- 13. GOOGLE PASSWORD MANAGER & BIOMETRIC AUTHENTICATION ---
+  // =========================================================================
+
+  // Cryptographic & Salt Utilities
+  function generateSalt() {
+    const arr = new Uint8Array(16);
+    crypto.getRandomValues(arr);
+    return Array.from(arr, (b) => b.toString(16).padStart(2, '0')).join('');
+  }
+
+  async function hashPin(pin, salt) {
+    const enc = new TextEncoder();
+    const data = enc.encode(`${salt}:${pin}`);
+    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+    return Array.from(new Uint8Array(hashBuffer), (b) => b.toString(16).padStart(2, '0')).join('');
+  }
+
+  function bufferToBase64(buf) {
+    return btoa(String.fromCharCode(...new Uint8Array(buf)));
+  }
+
+  function base64ToBuffer(b64) {
+    const binary = atob(b64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    return bytes.buffer;
+  }
+
+  // WebAuthn Biometric Registration (Touch ID / Face ID / Windows Hello)
+  async function registerDeviceBiometrics(username = 'user') {
+    if (!window.PublicKeyCredential) {
+      throw new Error('Biometric authentication is not supported by your browser environment.');
+    }
+
+    const challenge = new Uint8Array(32);
+    crypto.getRandomValues(challenge);
+
+    const userId = new Uint8Array(16);
+    crypto.getRandomValues(userId);
+
+    const createOptions = {
+      publicKey: {
+        challenge,
+        rp: {
+          name: 'PrivacyScreen Agent Vault',
+          id: window.location.hostname || undefined
+        },
+        user: {
+          id: userId,
+          name: username,
+          displayName: 'Vault Owner'
+        },
+        pubKeyCredParams: [
+          { type: 'public-key', alg: -7 },   // ES256
+          { type: 'public-key', alg: -257 }  // RS256
+        ],
+        authenticatorSelection: {
+          authenticatorAttachment: 'platform',
+          userVerification: 'required',
+          residentKey: 'discouraged'
+        },
+        timeout: 60000,
+        attestation: 'none'
+      }
+    };
+
+    const credential = await navigator.credentials.create(createOptions);
+    if (!credential) throw new Error('Biometric registration was cancelled.');
+    return bufferToBase64(credential.rawId);
+  }
+
+  // WebAuthn Biometric Verification
+  async function verifyDeviceBiometrics(credentialIdB64) {
+    if (!window.PublicKeyCredential) {
+      throw new Error('Biometric authentication is not supported on this device.');
+    }
+
+    const challenge = new Uint8Array(32);
+    crypto.getRandomValues(challenge);
+
+    const getOptions = {
+      publicKey: {
+        challenge,
+        timeout: 60000,
+        userVerification: 'required',
+        allowCredentials: credentialIdB64 ? [
+          {
+            id: base64ToBuffer(credentialIdB64),
+            type: 'public-key'
+          }
+        ] : []
+      }
+    };
+
+    const assertion = await navigator.credentials.get(getOptions);
+    if (!assertion) throw new Error('Biometric verification cancelled.');
+    return true;
+  }
+
+  // Floating Toast Notification
+  let toastTimer = null;
+  function showToast(msg) {
+    if (copyToastText) copyToastText.textContent = msg;
+    if (copyToast) {
+      copyToast.style.display = 'flex';
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => {
+        copyToast.style.display = 'none';
+      }, 2200);
+    }
+  }
+
+  function copyToClipboard(text, msg = 'Copied to clipboard!') {
+    if (!text) return;
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(() => showToast(msg)).catch(() => fallbackCopy(text, msg));
+    } else {
+      fallbackCopy(text, msg);
+    }
+  }
+
+  function fallbackCopy(text, msg) {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    try {
+      document.execCommand('copy');
+      showToast(msg);
+    } catch (e) {
+      showToast('Could not copy to clipboard');
+    }
+    document.body.removeChild(ta);
+  }
+
+  function generateStrongPassword(len = 16) {
+    const chars = 'abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789!@#$%^&*()_+~';
+    const values = new Uint32Array(len);
+    crypto.getRandomValues(values);
+    return Array.from(values).map((v) => chars[v % chars.length]).join('');
+  }
+
+  // Core Password Manager Loader
+  async function loadPasswordManager() {
+    chrome.runtime.sendMessage({ type: 'VAULT_GET_ALL' }, (res) => {
+      if (chrome.runtime.lastError || !res) return;
+
+      currentVaultEntries = res.entries || [];
+      isVaultLocked = !!res.isLocked;
+      hasMasterLock = !!res.requiresLock;
+
+      // Update badge count
+      if (passwordsCountPill) {
+        passwordsCountPill.textContent = currentVaultEntries.length;
+        passwordsCountPill.style.display = currentVaultEntries.length > 0 ? 'inline-block' : 'none';
+      }
+
+      // Update header lock button
+      updateLockStatusHeader(isVaultLocked, hasMasterLock);
+
+      // Show/hide setup reminder banner
+      if (lockSetupBanner) {
+        lockSetupBanner.style.display = (!hasMasterLock) ? 'flex' : 'none';
+      }
+
+      if (isVaultLocked) {
+        if (vaultLockScreen) vaultLockScreen.style.display = 'block';
+        if (vaultUnlockedView) vaultUnlockedView.style.display = 'none';
+        if (pinErrorMsg) pinErrorMsg.style.display = 'none';
+        if (pinUnlockInput) pinUnlockInput.value = '';
+      } else {
+        if (vaultLockScreen) vaultLockScreen.style.display = 'none';
+        if (vaultUnlockedView) vaultUnlockedView.style.display = 'block';
+        renderPasswordsList(passwordSearchInput ? passwordSearchInput.value : '');
+      }
+
+      // Keep settings modal vault list synchronized
+      loadVaultManager();
+    });
+  }
+
+  function updateLockStatusHeader(locked, hasLock) {
+    if (!vaultLockStatusBtn) return;
+    vaultLockStatusBtn.classList.remove('locked', 'unlocked');
+
+    if (!hasLock) {
+      if (lockStatusIcon) lockStatusIcon.textContent = '🔓';
+      if (lockStatusText) lockStatusText.textContent = 'No Lock';
+      vaultLockStatusBtn.title = 'No Security Lock Set (Click to set up)';
+    } else if (locked) {
+      if (lockStatusIcon) lockStatusIcon.textContent = '🔒';
+      if (lockStatusText) lockStatusText.textContent = 'Locked';
+      vaultLockStatusBtn.classList.add('locked');
+      vaultLockStatusBtn.title = 'Database is Locked (Click to unlock)';
+    } else {
+      if (lockStatusIcon) lockStatusIcon.textContent = '🔓';
+      if (lockStatusText) lockStatusText.textContent = 'Unlocked';
+      vaultLockStatusBtn.classList.add('unlocked');
+      vaultLockStatusBtn.title = 'Database Unlocked (Click to lock now)';
+    }
+  }
+
+  function renderPasswordsList(searchQuery = '') {
+    if (!passwordsListContainer) return;
+    const q = (searchQuery || '').trim().toLowerCase();
+
+    const filtered = currentVaultEntries.filter((e) => {
+      if (!q) return true;
+      return (
+        (e.siteName && e.siteName.toLowerCase().includes(q)) ||
+        (e.hostname && e.hostname.toLowerCase().includes(q)) ||
+        (e.url && e.url.toLowerCase().includes(q)) ||
+        (e.username && e.username.toLowerCase().includes(q))
+      );
+    });
+
+    if (savedPasswordsCountText) {
+      savedPasswordsCountText.textContent = `${filtered.length} saved credential${filtered.length === 1 ? '' : 's'}${q ? ' found' : ''}`;
+    }
+
+    if (filtered.length === 0) {
+      if (q) {
+        passwordsListContainer.innerHTML = `
+          <div class="vault-empty">
+            <span style="font-size: 24px;">🔍</span>
+            <p>No saved passwords match "<b>${escapeHtml(q)}</b>"</p>
+          </div>
+        `;
+      } else {
+        passwordsListContainer.innerHTML = `
+          <div class="vault-empty">
+            <span style="font-size: 28px; display: block; margin-bottom: 8px;">🔑</span>
+            <p>No saved passwords in your local database.</p>
+            <small>Log into any website or click <b>+ Add</b> above to store credentials permanently.</small>
+          </div>
+        `;
+      }
+      return;
+    }
+
+    passwordsListContainer.innerHTML = '';
+    filtered.forEach((entry) => {
+      const card = document.createElement('div');
+      card.className = 'pm-card';
+      card.setAttribute('data-id', entry.id);
+
+      const domain = entry.domain || entry.hostname || '';
+      const initial = (entry.siteName || domain || 'W').charAt(0).toUpperCase();
+      const faviconUrl = domain ? `https://www.google.com/s2/favicons?domain=${domain}&sz=64` : '';
+
+      card.innerHTML = `
+        <div class="pm-card-header">
+          <div class="pm-site-favicon" title="${escapeHtml(entry.siteName)}">
+            <img src="${escapeHtml(faviconUrl)}" onerror="this.style.display='none'; if(this.nextElementSibling) this.nextElementSibling.style.display='block';" alt="" />
+            <span style="display: none;">${escapeHtml(initial)}</span>
+          </div>
+          <div class="pm-site-info">
+            <div class="pm-site-name">${escapeHtml(entry.siteName || domain)}</div>
+            <a href="${escapeHtml(entry.url || `https://${entry.hostname}`)}" target="_blank" class="pm-site-url" title="${escapeHtml(entry.url)}">
+              ${escapeHtml(entry.hostname || entry.url || domain)}
+            </a>
+          </div>
+        </div>
+
+        <!-- Username Row -->
+        <div class="pm-data-row">
+          <span class="pm-data-label">User:</span>
+          <span class="pm-data-value">${escapeHtml(entry.username)}</span>
+          <div class="pm-data-actions">
+            <button class="pm-icon-btn pm-copy-user-btn" title="Copy Username" data-user="${escapeHtml(entry.username)}">📋</button>
+          </div>
+        </div>
+
+        <!-- Password Row -->
+        <div class="pm-data-row">
+          <span class="pm-data-label">Password:</span>
+          <span class="pm-data-value pm-pass-text" data-revealed="false" data-raw="${escapeHtml(entry.password)}">••••••••••••</span>
+          <div class="pm-data-actions">
+            <button class="pm-icon-btn pm-toggle-pass-btn" title="Show / Hide Password">👁️</button>
+            <button class="pm-icon-btn pm-copy-pass-btn" title="Copy Password" data-pass="${escapeHtml(entry.password)}">📋</button>
+          </div>
+        </div>
+
+        <!-- Quick Actions Row -->
+        <div class="pm-card-actions">
+          <button class="pm-autofill-btn" data-host="${escapeHtml(entry.hostname)}" data-user="${escapeHtml(entry.username)}" data-pass="${escapeHtml(entry.password)}" title="Fill on active browser tab">
+            <span>⚡ Autofill</span>
+          </button>
+          <button class="pm-edit-btn" title="Edit this credential">✏️ Edit</button>
+          <button class="pm-del-btn" title="Delete this credential">🗑️</button>
+        </div>
+      `;
+
+      passwordsListContainer.appendChild(card);
+    });
+
+    attachPasswordCardListeners();
+  }
+
+  function attachPasswordCardListeners() {
+    // Copy Username
+    passwordsListContainer.querySelectorAll('.pm-copy-user-btn').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const user = btn.getAttribute('data-user');
+        copyToClipboard(user, 'Username copied to clipboard! 📋');
+      });
+    });
+
+    // Copy Password
+    passwordsListContainer.querySelectorAll('.pm-copy-pass-btn').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const pass = btn.getAttribute('data-pass');
+        copyToClipboard(pass, 'Password copied to clipboard! 🔑');
+      });
+    });
+
+    // Toggle Password Visibility
+    passwordsListContainer.querySelectorAll('.pm-toggle-pass-btn').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const row = btn.closest('.pm-data-row');
+        const passEl = row.querySelector('.pm-pass-text');
+        const isRevealed = passEl.getAttribute('data-revealed') === 'true';
+        const raw = passEl.getAttribute('data-raw');
+
+        if (isRevealed) {
+          passEl.textContent = '••••••••••••';
+          passEl.setAttribute('data-revealed', 'false');
+          btn.textContent = '👁️';
+        } else {
+          passEl.textContent = raw;
+          passEl.setAttribute('data-revealed', 'true');
+          btn.textContent = '🙈';
+        }
+      });
+    });
+
+    // Autofill on Active Tab
+    passwordsListContainer.querySelectorAll('.pm-autofill-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const hostname = btn.getAttribute('data-host');
+        const username = btn.getAttribute('data-user');
+        const password = btn.getAttribute('data-pass');
+
+        setProcessingState(true);
+        showLog(`⚡ Autofilling credentials for ${hostname}...`);
+
+        chrome.runtime.sendMessage(
+          {
+            type: 'AUTOFILL_LOGIN',
+            data: { hostname, username, password, autoSubmit: false }
+          },
+          (res) => {
+            setProcessingState(false);
+            if (res && res.success) {
+              showToast(`Autofilled login for ${hostname}! ✨`);
+              showLog(`✅ Autofilled ${username} on ${hostname}`);
+            } else {
+              showLog(`Autofill notice: ${res?.error || 'Make sure you are on the login page'}`);
+            }
+          }
+        );
+      });
+    });
+
+    // Edit Credential
+    passwordsListContainer.querySelectorAll('.pm-edit-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const card = btn.closest('.pm-card');
+        const id = card.getAttribute('data-id');
+        const entry = currentVaultEntries.find((e) => e.id === id);
+        if (entry) {
+          openEditCredentialModal(entry);
+        }
+      });
+    });
+
+    // Delete Credential
+    passwordsListContainer.querySelectorAll('.pm-del-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const card = btn.closest('.pm-card');
+        const id = card.getAttribute('data-id');
+        const entry = currentVaultEntries.find((e) => e.id === id);
+        const name = entry?.siteName || entry?.hostname || 'this site';
+
+        if (confirm(`Are you sure you want to delete saved credentials for ${name}?`)) {
+          chrome.runtime.sendMessage({ type: 'VAULT_DELETE_ENTRY', data: { id } }, (res) => {
+            if (res && res.success) {
+              showToast(`Deleted credentials for ${name}`);
+              loadPasswordManager();
+              checkActiveSiteVault();
+            }
+          });
+        }
+      });
+    });
+  }
+
+  // Add / Edit Modal Controls
+  function openAddCredentialModal() {
+    if (credModalTitle) credModalTitle.textContent = 'Add Saved Password';
+    if (credEditId) credEditId.value = '';
+    if (credSiteNameInput) credSiteNameInput.value = '';
+    if (credUrlInput) credUrlInput.value = currentHostname ? `https://${currentHostname}` : '';
+    if (credUsernameInput) credUsernameInput.value = '';
+    if (credPasswordInput) credPasswordInput.value = '';
+    if (credNotesInput) credNotesInput.value = '';
+    if (credentialModal) credentialModal.style.display = 'flex';
+    if (credSiteNameInput) credSiteNameInput.focus();
+  }
+
+  function openEditCredentialModal(entry) {
+    if (credModalTitle) credModalTitle.textContent = 'Edit Saved Password';
+    if (credEditId) credEditId.value = entry.id;
+    if (credSiteNameInput) credSiteNameInput.value = entry.siteName || '';
+    if (credUrlInput) credUrlInput.value = entry.url || `https://${entry.hostname}`;
+    if (credUsernameInput) credUsernameInput.value = entry.username || '';
+    if (credPasswordInput) credPasswordInput.value = entry.password || '';
+    if (credNotesInput) credNotesInput.value = entry.notes || '';
+    if (credentialModal) credentialModal.style.display = 'flex';
+  }
+
+  if (addPasswordBtn) addPasswordBtn.addEventListener('click', openAddCredentialModal);
+  if (closeCredModalBtn) closeCredModalBtn.addEventListener('click', () => { credentialModal.style.display = 'none'; });
+  if (cancelCredentialBtn) cancelCredentialBtn.addEventListener('click', () => { credentialModal.style.display = 'none'; });
+
+  if (generateStrongPassBtn) {
+    generateStrongPassBtn.addEventListener('click', () => {
+      const strong = generateStrongPassword(16);
+      if (credPasswordInput) {
+        credPasswordInput.value = strong;
+        credPasswordInput.type = 'text';
+      }
+      if (toggleCredPassVisibilityBtn) toggleCredPassVisibilityBtn.textContent = '🙈';
+      showToast('Generated strong 16-character password! 🎲');
+    });
+  }
+
+  if (toggleCredPassVisibilityBtn) {
+    toggleCredPassVisibilityBtn.addEventListener('click', () => {
+      if (credPasswordInput.type === 'password') {
+        credPasswordInput.type = 'text';
+        toggleCredPassVisibilityBtn.textContent = '🙈';
+      } else {
+        credPasswordInput.type = 'password';
+        toggleCredPassVisibilityBtn.textContent = '👁️';
+      }
+    });
+  }
+
+  if (saveCredentialBtn) {
+    saveCredentialBtn.addEventListener('click', () => {
+      const id = credEditId.value.trim() || undefined;
+      const siteName = credSiteNameInput.value.trim();
+      const url = credUrlInput.value.trim();
+      const username = credUsernameInput.value.trim();
+      const password = credPasswordInput.value;
+      const notes = credNotesInput.value.trim();
+
+      if (!username || !password) {
+        alert('Please provide both username and password.');
+        return;
+      }
+
+      chrome.runtime.sendMessage(
+        {
+          type: 'VAULT_SAVE_ENTRY',
+          data: { id, siteName, url, username, password, notes }
+        },
+        (res) => {
+          if (res && res.success) {
+            credentialModal.style.display = 'none';
+            showToast('Credentials saved successfully! 💾');
+            loadPasswordManager();
+            checkActiveSiteVault();
+          } else {
+            alert(res?.error || 'Failed to save credentials.');
+          }
+        }
+      );
+    });
+  }
+
+  // Biometrics & PIN Unlock Handlers
+  if (biometricUnlockBtn) {
+    biometricUnlockBtn.addEventListener('click', async () => {
+      chrome.runtime.sendMessage({ type: 'AUTH_GET_STATUS' }, async (statusRes) => {
+        if (chrome.runtime.lastError || !statusRes) return;
+        const credId = statusRes.biometricCredentialId || '';
+
+        try {
+          if (biometricBtnLabel) biometricBtnLabel.textContent = 'Verifying Touch ID / Biometrics...';
+          await verifyDeviceBiometrics(credId);
+
+          chrome.runtime.sendMessage({ type: 'AUTH_SET_UNLOCKED', unlocked: true }, () => {
+            if (biometricBtnLabel) biometricBtnLabel.textContent = 'Unlock with Touch ID / Biometrics';
+            showToast('Vault unlocked via biometrics! 🔓');
+            loadPasswordManager();
+          });
+        } catch (err) {
+          if (biometricBtnLabel) biometricBtnLabel.textContent = 'Unlock with Touch ID / Biometrics';
+          console.warn('Biometric verification failed:', err);
+          if (pinErrorMsg) {
+            pinErrorMsg.textContent = 'Biometric check cancelled or unavailable. Enter PIN below.';
+            pinErrorMsg.style.display = 'block';
+          }
+          if (pinUnlockInput) pinUnlockInput.focus();
+        }
+      });
+    });
+  }
+
+  async function attemptPinUnlock() {
+    const pin = pinUnlockInput ? pinUnlockInput.value.trim() : '';
+    if (!pin) {
+      if (pinErrorMsg) {
+        pinErrorMsg.textContent = 'Please enter your PIN or passcode.';
+        pinErrorMsg.style.display = 'block';
+      }
+      return;
+    }
+
+    chrome.runtime.sendMessage({ type: 'AUTH_GET_STATUS' }, async (statusRes) => {
+      if (chrome.runtime.lastError || !statusRes) return;
+
+      const salt = statusRes.pinSalt || '';
+      const pinHash = await hashPin(pin, salt);
+
+      chrome.runtime.sendMessage({ type: 'AUTH_VERIFY_PIN', data: { pinHash } }, (verRes) => {
+        if (verRes && verRes.valid) {
+          if (pinErrorMsg) pinErrorMsg.style.display = 'none';
+          if (pinUnlockInput) pinUnlockInput.value = '';
+          showToast('Vault unlocked successfully! 🔓');
+          loadPasswordManager();
+        } else {
+          if (pinErrorMsg) {
+            pinErrorMsg.textContent = 'Incorrect PIN or passcode. Try again.';
+            pinErrorMsg.style.display = 'block';
+          }
+          if (pinUnlockInput) pinUnlockInput.select();
+        }
+      });
+    });
+  }
+
+  if (pinUnlockBtn) pinUnlockBtn.addEventListener('click', attemptPinUnlock);
+  if (pinUnlockInput) {
+    pinUnlockInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') attemptPinUnlock();
+    });
+  }
+
+  if (lockNowBtn) {
+    lockNowBtn.addEventListener('click', () => {
+      chrome.runtime.sendMessage({ type: 'AUTH_LOCK_NOW' }, () => {
+        showToast('Vault locked 🔒');
+        loadPasswordManager();
+      });
+    });
+  }
+
+  if (vaultLockStatusBtn) {
+    vaultLockStatusBtn.addEventListener('click', () => {
+      if (!hasMasterLock) {
+        openSetupLockModal();
+      } else if (isVaultLocked) {
+        const tabBtn = document.querySelector('.tab-btn[data-tab="passwordsTab"]');
+        if (tabBtn) tabBtn.click();
+        if (pinUnlockInput) pinUnlockInput.focus();
+      } else {
+        chrome.runtime.sendMessage({ type: 'AUTH_LOCK_NOW' }, () => {
+          showToast('Vault locked 🔒');
+          loadPasswordManager();
+        });
+      }
+    });
+  }
+
+  function openSetupLockModal() {
+    if (setupPinInput) setupPinInput.value = '';
+    if (setupPinConfirmInput) setupPinConfirmInput.value = '';
+    if (setupErrorMsg) setupErrorMsg.style.display = 'none';
+    if (lockSetupModal) lockSetupModal.style.display = 'flex';
+    if (setupPinInput) setupPinInput.focus();
+  }
+
+  if (openSetupLockBtn) openSetupLockBtn.addEventListener('click', openSetupLockModal);
+  if (openLockSetupBtn) openLockSetupBtn.addEventListener('click', openSetupLockModal);
+  if (closeLockSetupModalBtn) closeLockSetupModalBtn.addEventListener('click', () => { lockSetupModal.style.display = 'none'; });
+
+  if (confirmLockSetupBtn) {
+    confirmLockSetupBtn.addEventListener('click', async () => {
+      const pin = setupPinInput ? setupPinInput.value.trim() : '';
+      const confirmPin = setupPinConfirmInput ? setupPinConfirmInput.value.trim() : '';
+      const enableBio = setupEnableBiometrics ? setupEnableBiometrics.checked : false;
+
+      if (!pin || pin.length < 4) {
+        if (setupErrorMsg) {
+          setupErrorMsg.textContent = 'PIN or passcode must be at least 4 characters.';
+          setupErrorMsg.style.display = 'block';
+        }
+        return;
+      }
+
+      if (pin !== confirmPin) {
+        if (setupErrorMsg) {
+          setupErrorMsg.textContent = 'PINs do not match. Please re-enter.';
+          setupErrorMsg.style.display = 'block';
+        }
+        return;
+      }
+
+      if (setupErrorMsg) setupErrorMsg.style.display = 'none';
+
+      let bioCredId = '';
+      if (enableBio) {
+        try {
+          bioCredId = await registerDeviceBiometrics();
+        } catch (err) {
+          console.warn('Biometric setup warning:', err.message);
+        }
+      }
+
+      const salt = generateSalt();
+      const pinHash = await hashPin(pin, salt);
+
+      chrome.runtime.sendMessage(
+        {
+          type: 'AUTH_SETUP_LOCK',
+          data: {
+            pinSalt: salt,
+            pinHash,
+            biometricsEnabled: !!bioCredId,
+            biometricCredentialId: bioCredId
+          }
+        },
+        (res) => {
+          if (res && res.success) {
+            lockSetupModal.style.display = 'none';
+            showToast('Security protection activated! 🛡️');
+            loadPasswordManager();
+          } else {
+            if (setupErrorMsg) {
+              setupErrorMsg.textContent = res?.error || 'Failed to save security lock.';
+              setupErrorMsg.style.display = 'block';
+            }
+          }
+        }
+      );
+    });
+  }
+
+  if (passwordSearchInput) {
+    passwordSearchInput.addEventListener('input', () => {
+      const val = passwordSearchInput.value;
+      if (clearSearchBtn) clearSearchBtn.style.display = val ? 'block' : 'none';
+      renderPasswordsList(val);
+    });
+  }
+
+  if (clearSearchBtn) {
+    clearSearchBtn.addEventListener('click', () => {
+      if (passwordSearchInput) {
+        passwordSearchInput.value = '';
+        renderPasswordsList('');
+        passwordSearchInput.focus();
+      }
+      clearSearchBtn.style.display = 'none';
+    });
+  }
+
+  if (refreshVaultBtn) {
+    refreshVaultBtn.addEventListener('click', () => {
+      loadPasswordManager();
+      showToast('Reloaded vault from database 🔄');
+    });
+  }
+
+  // Legacy Settings Modal Vault Loader
   function loadVaultManager() {
     chrome.runtime.sendMessage({ type: 'GET_ALL_SAVED_SITES' }, (res) => {
       if (chrome.runtime.lastError || !res || !res.sites) return;
       const sites = res.sites;
-      vaultCountTag.textContent = `${sites.length} site${sites.length === 1 ? '' : 's'}`;
+      if (vaultCountTag) vaultCountTag.textContent = `${sites.length} site${sites.length === 1 ? '' : 's'}`;
 
+      if (!vaultList) return;
       if (sites.length === 0) {
         vaultList.innerHTML = '<div class="vault-empty">No credentials saved yet. Log into any site with the extension active to save.</div>';
         return;
@@ -749,7 +1501,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         row.className = 'vault-item';
         row.innerHTML = `
           <div>
-            <div class="vault-item-domain">${escapeHtml(item.domain)}</div>
+            <div class="vault-item-domain">${escapeHtml(item.siteName ? `${item.siteName} (${item.domain})` : item.domain)}</div>
             <div class="vault-item-user">${escapeHtml(item.username)}</div>
           </div>
           <button class="vault-item-del-btn" title="Delete saved credential" data-domain="${escapeHtml(item.domain)}">🗑️</button>
@@ -763,7 +1515,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           chrome.runtime.sendMessage(
             { type: 'DELETE_SITE_CREDENTIALS', data: { hostname: domain } },
             () => {
-              loadVaultManager();
+              loadPasswordManager();
               checkActiveSiteVault();
               showLog(`Removed credentials for ${domain}`);
             }

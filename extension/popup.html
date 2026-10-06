@@ -20,9 +20,15 @@
           <span class="version-tag">OpenAgent AI</span>
         </div>
       </div>
-      <div class="server-badge" id="serverBadge" title="FastAPI Vision Backend Status">
-        <span class="badge-dot"></span>
-        <span class="badge-text" id="serverStatusText">Connecting...</span>
+      <div style="display: flex; align-items: center; gap: 6px;">
+        <button id="vaultLockStatusBtn" class="lock-pill-btn" title="Vault Lock Status & Security Settings">
+          <span id="lockStatusIcon">🔓</span>
+          <span id="lockStatusText">Unlocked</span>
+        </button>
+        <div class="server-badge" id="serverBadge" title="FastAPI Vision Backend Status">
+          <span class="badge-dot"></span>
+          <span class="badge-text" id="serverStatusText">Connecting...</span>
+        </div>
       </div>
     </header>
 
@@ -34,6 +40,10 @@
       <button class="tab-btn" data-tab="formTab">
         <span>📋 Info Box</span>
         <span class="tab-pill" id="formFieldsCountPill" style="display: none;">0</span>
+      </button>
+      <button class="tab-btn" data-tab="passwordsTab">
+        <span>🔑 Passwords</span>
+        <span class="tab-pill" id="passwordsCountPill" style="display: none;">0</span>
       </button>
       <button class="tab-btn" data-tab="profileTab">
         <span>👤 Profile DB</span>
@@ -225,7 +235,114 @@
       </div>
     </div>
 
-    <!-- ================= TAB 3: LOCAL PROFILE DATABASE ================= -->
+    <!-- ================= TAB 3: GOOGLE PASSWORD MANAGER (VAULT) ================= -->
+    <div class="tab-content" id="passwordsTab" style="display: none;">
+      <!-- Security Lock Status Bar -->
+      <div class="sub-header-bar">
+        <div>
+          <div class="sub-header-title">Password Manager</div>
+          <div class="sub-header-subtitle" id="pmSubtitle">🔒 Google-Style On-Device Database</div>
+        </div>
+        <div style="display: flex; gap: 6px; align-items: center;">
+          <button id="lockNowBtn" class="small-action-btn" title="Lock Database Now">
+            <span>🔒 Lock</span>
+          </button>
+          <button id="openSetupLockBtn" class="icon-action-btn" title="Security & Biometric Lock Settings">
+            <span>⚙️</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Quick Setup Reminder Banner (shown if lock is not configured yet) -->
+      <div class="lock-setup-banner" id="lockSetupBanner" style="display: none;">
+        <div class="lock-setup-text">
+          <span class="lock-setup-icon">🛡️</span>
+          <div>
+            <div class="lock-setup-title">Enable Device Security</div>
+            <div class="lock-setup-sub">Protect passwords with Touch ID or Device PIN</div>
+          </div>
+        </div>
+        <button id="openLockSetupBtn" class="small-action-btn highlight">Set Up</button>
+      </div>
+
+      <!-- Lock Screen View (shown when locked) -->
+      <div class="vault-lock-screen" id="vaultLockScreen" style="display: none;">
+        <div class="lock-shield-wrapper">
+          <span class="lock-shield-icon">🔒</span>
+          <div class="lock-pulse-ring"></div>
+        </div>
+        <div class="lock-screen-title">Database Protected</div>
+        <div class="lock-screen-desc">
+          Authenticate using your device credentials or PIN to view, copy, and autofill saved passwords.
+        </div>
+
+        <button id="biometricUnlockBtn" class="primary-btn biometric-btn full-width">
+          <span class="btn-icon">👆</span>
+          <span id="biometricBtnLabel">Unlock with Touch ID / Biometrics</span>
+        </button>
+
+        <div class="auth-divider">
+          <span>OR DEVICE PIN</span>
+        </div>
+
+        <div class="pin-input-group">
+          <input 
+            type="password" 
+            id="pinUnlockInput" 
+            class="pin-input" 
+            placeholder="Enter Device PIN / Passcode" 
+            maxlength="32" 
+            autocomplete="current-password"
+          />
+          <button id="pinUnlockBtn" class="secondary-btn pin-submit-btn">Unlock</button>
+        </div>
+        <div class="pin-error-msg" id="pinErrorMsg" style="display: none;">Incorrect PIN or passcode. Try again.</div>
+
+        <div class="lock-security-badges">
+          <span>🛡️ 100% On-Device</span>
+          <span>•</span>
+          <span>🔑 Zero Cloud Transmission</span>
+        </div>
+      </div>
+
+      <!-- Unlocked Password Manager View -->
+      <div class="vault-unlocked-view" id="vaultUnlockedView">
+        <!-- Search Toolbar -->
+        <div class="pm-toolbar">
+          <div class="pm-search-wrapper">
+            <span class="pm-search-icon">🔍</span>
+            <input 
+              type="text" 
+              id="passwordSearchInput" 
+              placeholder="Search websites or usernames..." 
+              autocomplete="off" 
+            />
+            <button id="clearSearchBtn" class="clear-search-btn" style="display: none;">&times;</button>
+          </div>
+          <button id="addPasswordBtn" class="add-pass-btn" title="Add New Saved Password">
+            <span class="btn-icon">➕</span>
+            <span>Add</span>
+          </button>
+        </div>
+
+        <!-- Count & Actions Bar -->
+        <div class="pm-stats-bar">
+          <span id="savedPasswordsCountText">0 saved credentials</span>
+          <button id="refreshVaultBtn" class="text-action-btn" title="Reload from database">🔄 Refresh</button>
+        </div>
+
+        <!-- Passwords List -->
+        <div class="pm-list-container" id="passwordsListContainer">
+          <div class="vault-empty">
+            <span style="font-size: 28px; display: block; margin-bottom: 8px;">🔑</span>
+            <p>No saved passwords found yet.</p>
+            <small>Log into any website or click <b>+ Add</b> above to store credentials permanently.</small>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ================= TAB 4: LOCAL PROFILE DATABASE ================= -->
     <div class="tab-content" id="profileTab" style="display: none;">
       <div class="sub-header-bar">
         <div>
@@ -399,6 +516,92 @@
           </div>
         </div>
       </div>
+    </div>
+
+    <!-- Add / Edit Saved Credential Modal -->
+    <div class="modal-backdrop" id="credentialModal" style="display: none;">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h4 id="credModalTitle">Add Saved Password</h4>
+          <button id="closeCredModalBtn" class="close-btn">&times;</button>
+        </div>
+        <div class="modal-body">
+          <input type="hidden" id="credEditId" value="" />
+          <div class="form-group">
+            <label for="credSiteNameInput">Website Name</label>
+            <input type="text" id="credSiteNameInput" placeholder="e.g. Google, GitHub, Netflix" autocomplete="off" />
+          </div>
+          <div class="form-group">
+            <label for="credUrlInput">Website URL or Domain</label>
+            <input type="text" id="credUrlInput" placeholder="e.g. https://accounts.google.com" autocomplete="off" />
+          </div>
+          <div class="form-group">
+            <label for="credUsernameInput">Username / Email</label>
+            <input type="text" id="credUsernameInput" placeholder="e.g. user@example.com" autocomplete="off" />
+          </div>
+          <div class="form-group">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+              <label for="credPasswordInput" style="margin-bottom: 0;">Password</label>
+              <button type="button" id="generateStrongPassBtn" class="text-action-btn" style="font-size: 11px;">🎲 Generate Strong</button>
+            </div>
+            <div class="pass-input-row">
+              <input type="password" id="credPasswordInput" placeholder="Enter password" autocomplete="new-password" />
+              <button type="button" id="toggleCredPassVisibilityBtn" class="icon-toggle-btn" title="Show/Hide Password">👁️</button>
+            </div>
+          </div>
+          <div class="form-group">
+            <label for="credNotesInput">Notes (Optional)</label>
+            <textarea id="credNotesInput" rows="2" placeholder="e.g. 2FA backup codes, PIN, account ID"></textarea>
+          </div>
+          <div class="modal-actions" style="display: flex; gap: 8px;">
+            <button id="saveCredentialBtn" class="primary-btn" style="flex: 1;">Save Password</button>
+            <button id="cancelCredentialBtn" class="secondary-btn" style="flex: 1;">Cancel</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Security Lock Setup Modal -->
+    <div class="modal-backdrop" id="lockSetupModal" style="display: none;">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h4>Vault Security Protection</h4>
+          <button id="closeLockSetupModalBtn" class="close-btn">&times;</button>
+        </div>
+        <div class="modal-body">
+          <p style="font-size: 12px; color: var(--text-muted); margin-bottom: 12px; line-height: 1.5;">
+            Lock your password vault and profile data using your device credentials or PIN.
+          </p>
+          <div class="form-group">
+            <label for="setupPinInput">Master PIN / Passcode (4-16 chars)</label>
+            <input type="password" id="setupPinInput" placeholder="Enter PIN or passcode" maxlength="32" autocomplete="new-password" />
+          </div>
+          <div class="form-group">
+            <label for="setupPinConfirmInput">Confirm PIN / Passcode</label>
+            <input type="password" id="setupPinConfirmInput" placeholder="Re-enter PIN or passcode" maxlength="32" autocomplete="new-password" />
+          </div>
+          <div class="form-group">
+            <label class="toggle-card" style="padding: 10px; margin-top: 4px;">
+              <input type="checkbox" checked id="setupEnableBiometrics" />
+              <div class="toggle-content">
+                <span class="toggle-title">👆 Enable Touch ID / Biometrics</span>
+                <span class="toggle-desc">Fast unlock with device biometric sensor</span>
+              </div>
+              <span class="switch"></span>
+            </label>
+          </div>
+          <div class="setup-error-msg" id="setupErrorMsg" style="display: none;"></div>
+          <div class="modal-actions" style="margin-top: 14px;">
+            <button id="confirmLockSetupBtn" class="primary-btn full-width">Save & Lock Protection</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Floating Copy Toast -->
+    <div class="copy-toast" id="copyToast" style="display: none;">
+      <span class="toast-icon">✨</span>
+      <span id="copyToastText">Copied to clipboard!</span>
     </div>
   </div>
 
