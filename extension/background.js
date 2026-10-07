@@ -342,68 +342,81 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       }
 
       case 'VAULT_SAVE_ENTRY': {
-        const { id, siteName, url, hostname, username, password, notes } = request.data || {};
-        if (!username || !password) {
-          sendResponse({ success: false, error: 'Username and password are required' });
-          break;
-        }
-
-        let host = hostname;
-        if (!host && url) {
-          try {
-            const parsed = new URL(url.includes('://') ? url : `https://${url}`);
-            host = parsed.hostname;
-          } catch(e) {
-            host = url;
+        try {
+          const { id, siteName, url, hostname, username, password, notes } = request.data || {};
+          if (!username || !password) {
+            sendResponse({ success: false, error: 'Username and password are required' });
+            break;
           }
-        }
-        if (!host) host = 'website.local';
 
-        const rootDom = getRootDomain(host);
-        const name = siteName || formatSiteName(host);
-        let fullUrl = url || (host.startsWith('http') ? host : `https://${host}`);
-        if (fullUrl && !fullUrl.startsWith('http://') && !fullUrl.startsWith('https://')) {
-          fullUrl = `https://${fullUrl}`;
-        }
+          let host = (hostname || '').trim();
+          let cleanUrl = (url || '').trim();
+          if (!host && cleanUrl) {
+            try {
+              const parsed = new URL(cleanUrl.includes('://') ? cleanUrl : `https://${cleanUrl}`);
+              host = parsed.hostname;
+            } catch(e) {
+              host = cleanUrl.replace(/^https?:\/\//, '').split('/')[0].split(':')[0];
+            }
+          }
+          if (!host) host = 'website.local';
 
-        let targetEntry = null;
-        if (id) {
-          targetEntry = state.vaultList.find((e) => e.id === id);
-        } else {
-          // If no id, match by domain/host + username to update existing
-          targetEntry = state.vaultList.find((e) => (e.hostname === host || (rootDom && e.domain === rootDom)) && e.username === username);
-        }
+          const rootDom = getRootDomain(host);
+          const name = siteName ? siteName.trim() : formatSiteName(host);
+          let fullUrl = cleanUrl;
+          if (!fullUrl) {
+            fullUrl = host.startsWith('http') ? host : `https://${host}`;
+          } else if (!fullUrl.startsWith('http://') && !fullUrl.startsWith('https://')) {
+            fullUrl = `https://${fullUrl}`;
+          }
 
-        if (targetEntry) {
-          // Update existing entry
-          targetEntry.siteName = name || targetEntry.siteName;
-          targetEntry.url = fullUrl || targetEntry.url;
-          targetEntry.hostname = host;
-          targetEntry.domain = rootDom;
-          targetEntry.username = username;
-          targetEntry.password = password;
-          targetEntry.notes = notes !== undefined ? notes : (targetEntry.notes || '');
-          targetEntry.updatedAt = Date.now();
-        } else {
-          // Create new entry
-          const newEntry = {
-            id: id || `cred_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-            siteName: name,
-            url: fullUrl,
-            hostname: host,
-            domain: rootDom,
-            username,
-            password,
-            notes: notes || '',
-            createdAt: Date.now(),
-            updatedAt: Date.now()
-          };
-          state.vaultList.unshift(newEntry);
-          targetEntry = newEntry;
-        }
+          if (!Array.isArray(state.vaultList)) {
+            state.vaultList = [];
+          }
 
-        await saveVault();
-        sendResponse({ success: true, entry: targetEntry, message: `Saved credentials for ${name}` });
+          let targetEntry = null;
+          if (id) {
+            targetEntry = state.vaultList.find((e) => e.id === id);
+          }
+          if (!targetEntry) {
+            // Match by domain/host + username to update existing
+            targetEntry = state.vaultList.find((e) => (e.hostname === host || (rootDom && e.domain === rootDom)) && e.username === username);
+          }
+
+          if (targetEntry) {
+            // Update existing entry
+            targetEntry.siteName = name || targetEntry.siteName;
+            targetEntry.url = fullUrl || targetEntry.url;
+            targetEntry.hostname = host;
+            targetEntry.domain = rootDom;
+            targetEntry.username = username;
+            targetEntry.password = password;
+            targetEntry.notes = notes !== undefined ? notes : (targetEntry.notes || '');
+            targetEntry.updatedAt = Date.now();
+          } else {
+            // Create new entry
+            const newEntry = {
+              id: id || `cred_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+              siteName: name,
+              url: fullUrl,
+              hostname: host,
+              domain: rootDom,
+              username,
+              password,
+              notes: notes || '',
+              createdAt: Date.now(),
+              updatedAt: Date.now()
+            };
+            state.vaultList.unshift(newEntry);
+            targetEntry = newEntry;
+          }
+
+          await saveVault();
+          sendResponse({ success: true, entry: targetEntry, message: `Saved credentials for ${name}` });
+        } catch (saveErr) {
+          console.error('[PrivacyScreen Agent] Error in VAULT_SAVE_ENTRY:', saveErr);
+          sendResponse({ success: false, error: saveErr.message || 'Error saving to database' });
+        }
         break;
       }
 

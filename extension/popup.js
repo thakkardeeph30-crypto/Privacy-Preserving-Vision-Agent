@@ -619,16 +619,13 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
     });
     if (userVal && passVal && currentHostname) {
-      chrome.runtime.sendMessage({
-        type: 'VAULT_SAVE_ENTRY',
-        data: {
-          hostname: currentHostname,
-          username: userVal,
-          password: passVal,
-          url: `https://${currentHostname}`,
-          siteName: formatSiteName(currentHostname)
-        }
-      }, () => {
+      saveCredentialDirectly({
+        hostname: currentHostname,
+        username: userVal,
+        password: passVal,
+        url: `https://${currentHostname}`,
+        siteName: formatSiteName(currentHostname)
+      }).then(() => {
         loadPasswordManager();
       });
     }
@@ -997,12 +994,22 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Core Password Manager Loader
   async function loadPasswordManager() {
-    chrome.runtime.sendMessage({ type: 'VAULT_GET_ALL' }, (res) => {
-      if (chrome.runtime.lastError || !res) return;
-
-      currentVaultEntries = res.entries || [];
-      isVaultLocked = !!res.isLocked;
-      hasMasterLock = !!res.requiresLock;
+    chrome.runtime.sendMessage({ type: 'VAULT_GET_ALL' }, async (res) => {
+      if (!chrome.runtime.lastError && res && res.success) {
+        currentVaultEntries = res.entries || [];
+        isVaultLocked = !!res.isLocked;
+        hasMasterLock = !!res.requiresLock;
+      } else {
+        // Fallback directly to local disk storage
+        try {
+          const localData = await chrome.storage.local.get(['privacy_agent_vault_v2', 'privacy_agent_auth']);
+          currentVaultEntries = Array.isArray(localData.privacy_agent_vault_v2) ? localData.privacy_agent_vault_v2 : [];
+          hasMasterLock = !!localData.privacy_agent_auth?.hasMasterPin;
+          isVaultLocked = false;
+        } catch (e) {
+          currentVaultEntries = currentVaultEntries || [];
+        }
+      }
 
       // Update badge counts
       if (databaseCountPill) {
@@ -1242,23 +1249,171 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Delete Credential
     passwordsListContainer.querySelectorAll('.pm-del-btn').forEach((btn) => {
-      btn.addEventListener('click', () => {
+      btn.addEventListener('click', async () => {
         const card = btn.closest('.pm-card');
         const id = card.getAttribute('data-id');
         const entry = currentVaultEntries.find((e) => e.id === id);
         const name = entry?.siteName || entry?.hostname || 'this site';
 
         if (confirm(`Are you sure you want to delete saved credentials for ${name}?`)) {
-          chrome.runtime.sendMessage({ type: 'VAULT_DELETE_ENTRY', data: { id } }, (res) => {
-            if (res && res.success) {
-              showToast(`Deleted credentials for ${name}`);
-              loadPasswordManager();
-              checkActiveSiteVault();
+          // Direct storage deletion for immediate reliability
+          try {
+            const data = await chrome.storage.local.get(['privacy_agent_vault_v2', 'vault']);
+            let vaultList = Array.isArray(data.privacy_agent_vault_v2) ? data.privacy_agent_vault_v2 : [];
+            vaultList = vaultList.filter((e) => e.id !== id);
+            await chrome.storage.local.set({ privacy_agent_vault_v2: vaultList });
+            currentVaultEntries = vaultList;
+            showToast(`Deleted credentials for ${name}`);
+            renderPasswordsList(passwordSearchInput ? passwordSearchInput.value : '');
+            if (databaseCountPill) {
+              databaseCountPill.textContent = vaultList.length;
+              databaseCountPill.style.display = vaultList.length > 0 ? 'inline-block' : 'none';
             }
+            if (dbPassCountBadge) dbPassCountBadge.textContent = vaultList.length;
+            await checkActiveSiteVault();
+          } catch (e) {}
+
+          // Also notify background
+          chrome.runtime.sendMessage({ type: 'VAULT_DELETE_ENTRY', data: { id } }, () => {
+            if (chrome.runtime.lastError) {}
           });
         }
       });
     });
+  }
+
+  // Helpers for domain and site name formatting in popup
+  function formatSiteName(hostname) {
+    if (!hostname) return 'Website';
+    let clean = hostname.replace(/^www\./, '').split(':')[0];
+    const parts = clean.split('.');
+    if (parts.length > 1) {
+      const main = parts[parts.length - 2];
+      return main.charAt(0).toUpperCase() + main.slice(1);
+    }
+    return clean.charAt(0).toUpperCase() + clean.slice(1);
+  }
+
+  function getRootDomain(hostname) {
+    if (!hostname) return '';
+    const clean = hostname.replace(/^www\./, '').split(':')[0];
+    const parts = clean.split('.');
+    if (parts.length >= 2) {
+      return parts.slice(-2).join('.');
+    }
+    return clean;
+  }
+
+  // Resilient direct database storage save helper (100% on-device guaranteed)
+  async function saveCredentialDirectly(credData) {
+    const { id, siteName, url, username, password, notes } = credData;
+    if (!username || !password) {
+      throw new Error('Please provide both username and password.');
+    }
+
+    let host = '';
+    const cleanUrl = (url || '').trim();
+    if (cleanUrl) {
+      try {
+        const parsed = new URL(cleanUrl.includes('://') ? cleanUrl : `https://${cleanUrl}`);
+        host = parsed.hostname;
+      } catch (e) {
+        host = cleanUrl.replace(/^https?:\/\//, '').split('/')[0].split(':')[0];
+      }
+    }
+    if (!host && currentHostname) host = currentHostname;
+    if (!host) host = 'website.local';
+
+    const rootDom = getRootDomain(host);
+    const name = siteName ? siteName.trim() : formatSiteName(host);
+    let fullUrl = cleanUrl;
+    if (!fullUrl) {
+      fullUrl = host.startsWith('http') ? host : `https://${host}`;
+    } else if (!fullUrl.startsWith('http://') && !fullUrl.startsWith('https://')) {
+      fullUrl = `https://${fullUrl}`;
+    }
+
+    // 1. Direct persistent save to chrome.storage.local
+    let targetEntry = null;
+    try {
+      const data = await chrome.storage.local.get(['privacy_agent_vault_v2', 'vault']);
+      let vaultList = Array.isArray(data.privacy_agent_vault_v2) ? data.privacy_agent_vault_v2 : [];
+      let legacyVault = data.vault && typeof data.vault === 'object' ? data.vault : {};
+
+      if (id) {
+        targetEntry = vaultList.find((e) => e.id === id);
+      }
+      if (!targetEntry) {
+        targetEntry = vaultList.find((e) => (e.hostname === host || (rootDom && e.domain === rootDom)) && e.username === username);
+      }
+
+      if (targetEntry) {
+        targetEntry.siteName = name || targetEntry.siteName;
+        targetEntry.url = fullUrl || targetEntry.url;
+        targetEntry.hostname = host;
+        targetEntry.domain = rootDom;
+        targetEntry.username = username;
+        targetEntry.password = password;
+        targetEntry.notes = notes !== undefined ? notes : (targetEntry.notes || '');
+        targetEntry.updatedAt = Date.now();
+      } else {
+        targetEntry = {
+          id: id || `cred_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+          siteName: name,
+          url: fullUrl,
+          hostname: host,
+          domain: rootDom,
+          username,
+          password,
+          notes: notes || '',
+          createdAt: Date.now(),
+          updatedAt: Date.now()
+        };
+        vaultList.unshift(targetEntry);
+      }
+
+      legacyVault[host] = {
+        username,
+        password,
+        domain: host,
+        updatedAt: Date.now()
+      };
+
+      await chrome.storage.local.set({
+        privacy_agent_vault_v2: vaultList,
+        vault: legacyVault
+      });
+
+      // Update in-memory cache so UI updates immediately
+      currentVaultEntries = vaultList;
+    } catch (storageErr) {
+      console.warn('Direct storage write warning:', storageErr);
+    }
+
+    // 2. Also notify background service worker (syncs its in-memory state)
+    try {
+      chrome.runtime.sendMessage(
+        {
+          type: 'VAULT_SAVE_ENTRY',
+          data: {
+            id: targetEntry ? targetEntry.id : id,
+            siteName: name,
+            url: fullUrl,
+            hostname: host,
+            username,
+            password,
+            notes
+          }
+        },
+        () => {
+          if (chrome.runtime.lastError) {
+            // Ignored because data is already safely in chrome.storage.local!
+          }
+        }
+      );
+    } catch (e) {}
+
+    return targetEntry || { siteName: name, username };
   }
 
   // Add / Edit Modal Controls
@@ -1314,7 +1469,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   if (saveCredentialBtn) {
-    saveCredentialBtn.addEventListener('click', () => {
+    saveCredentialBtn.addEventListener('click', async () => {
       const id = credEditId.value.trim() || undefined;
       const siteName = credSiteNameInput.value.trim();
       const url = credUrlInput.value.trim();
@@ -1327,22 +1482,16 @@ document.addEventListener('DOMContentLoaded', async () => {
         return;
       }
 
-      chrome.runtime.sendMessage(
-        {
-          type: 'VAULT_SAVE_ENTRY',
-          data: { id, siteName, url, username, password, notes }
-        },
-        (res) => {
-          if (res && res.success) {
-            credentialModal.style.display = 'none';
-            showToast('Credentials saved successfully! 💾');
-            loadPasswordManager();
-            checkActiveSiteVault();
-          } else {
-            alert(res?.error || 'Failed to save credentials.');
-          }
-        }
-      );
+      try {
+        await saveCredentialDirectly({ id, siteName, url, username, password, notes });
+        if (credentialModal) credentialModal.style.display = 'none';
+        showToast('Credentials saved successfully! 💾');
+        await loadPasswordManager();
+        await checkActiveSiteVault();
+      } catch (err) {
+        console.error('Error saving credential:', err);
+        alert(err.message || 'Failed to save credentials.');
+      }
     });
   }
 

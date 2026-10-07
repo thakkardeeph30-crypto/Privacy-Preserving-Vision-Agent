@@ -71,6 +71,12 @@ const offscreenPrivacyFilter = new PrivacyFilter();
 
 // Listen for messages from background service worker
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (!message) return;
+  const offscreenTasks = ['LOAD_MODEL', 'CHECK_VISION_MODEL', 'OFFSCREEN_ANALYZE_SCREEN', 'OFFSCREEN_REDACT_IMAGE'];
+  if (!offscreenTasks.includes(message.type)) {
+    return; // Never interfere with background or database messages
+  }
+
   if (message.type === 'LOAD_MODEL') {
     loadVisionModel().then(() => {
       sendResponse({ status: 'loaded', webgpu: isWebGPUSupported });
@@ -88,7 +94,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return false;
   }
 
-  if (message.type === 'OFFSCREEN_ANALYZE_SCREEN' || message.type === 'PROCESS_SCREEN') {
+  if (message.type === 'OFFSCREEN_ANALYZE_SCREEN') {
     handleScreenAnalysis(message.screenshot, sendResponse);
     return true; // Keep channel open for async response
   }
