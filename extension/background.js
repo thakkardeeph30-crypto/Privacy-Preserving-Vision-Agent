@@ -636,15 +636,23 @@ async function handleAutofillLogin(data, sendResponse) {
 
     let hostname = data.hostname || '';
     if (!hostname && tab.url) {
-      try { hostname = new URL(tab.url).hostname; } catch(e) {}
+      try { hostname = new URL(tab.url).hostname; } catch (e) {}
     }
 
-    const cred = state.vaultList.find((e) => e.hostname === hostname) || state.vault[hostname];
-    const username = data.username || cred?.username;
-    const password = data.password || cred?.password;
+    const rootDom = getRootDomain(hostname);
+    const cred = state.vaultList.find((e) =>
+      e.hostname === hostname ||
+      (rootDom && (e.domain === rootDom || e.hostname === rootDom || getRootDomain(e.hostname) === rootDom))
+    ) || state.vault[hostname] || (rootDom ? state.vault[rootDom] : null);
 
-    if (!username || !password) {
-      throw new Error(`No saved credentials found in local storage for ${hostname || 'this site'}`);
+    const username = data.username || cred?.username;
+    let password = data.password;
+    if (!password || password === '••••••••') {
+      password = cred?.password;
+    }
+
+    if (!username || !password || password === '••••••••') {
+      throw new Error(`No saved credentials found in database for ${hostname || 'this site'}. Make sure your database vault is unlocked.`);
     }
 
     await ensureContentScript(tab.id);
@@ -659,7 +667,9 @@ async function handleAutofillLogin(data, sendResponse) {
       },
       (res) => {
         if (chrome.runtime.lastError || !res) {
-          sendResponse({ success: false, error: chrome.runtime.lastError?.message || 'Autofill failed' });
+          sendResponse({ success: false, error: chrome.runtime.lastError?.message || 'Autofill failed to communicate with tab' });
+        } else if (!res.success) {
+          sendResponse({ success: false, error: res.error || 'No matching login fields found on active page' });
         } else {
           state.stats.totalActionsExecuted += 2;
           saveState();

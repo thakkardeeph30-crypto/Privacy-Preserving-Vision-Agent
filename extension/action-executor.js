@@ -176,17 +176,39 @@ class ActionExecutor {
       'value'
     )?.set;
 
+    const stringVal = String(value !== undefined && value !== null ? value : '');
+    const prevVal = el.value;
+
     if (el instanceof HTMLTextAreaElement && nativeTextAreaSetter) {
-      nativeTextAreaSetter.call(el, value || '');
+      nativeTextAreaSetter.call(el, stringVal);
     } else if (el instanceof HTMLInputElement && nativeInputValueSetter) {
-      nativeInputValueSetter.call(el, value || '');
+      nativeInputValueSetter.call(el, stringVal);
     } else {
-      el.value = value || '';
+      el.value = stringVal;
     }
 
-    // Dispatch input & change events
-    el.dispatchEvent(new Event('input', { bubbles: true }));
-    el.dispatchEvent(new Event('change', { bubbles: true }));
+    // Reset React 15-19 internal value tracker
+    if (el._valueTracker) {
+      try { el._valueTracker.setValue(prevVal); } catch (e) {}
+    }
+
+    el.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'Unidentified' }));
+
+    try {
+      el.dispatchEvent(new InputEvent('input', {
+        bubbles: true,
+        cancelable: true,
+        composed: true,
+        inputType: 'insertReplacementText',
+        data: stringVal
+      }));
+    } catch (e) {
+      el.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+    }
+
+    el.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
+    el.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, cancelable: true, key: 'Unidentified' }));
+    el.dispatchEvent(new Event('blur', { bubbles: true, composed: true }));
 
     return {
       success: true,

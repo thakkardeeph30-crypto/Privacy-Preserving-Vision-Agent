@@ -165,102 +165,311 @@
     }
   }
 
+  // --- Robust DOM & Visibility Utilities ---
+  function getAllDocumentInputs(root = document) {
+    const inputs = [];
+    const traverse = (node) => {
+      if (!node) return;
+      if (node.querySelectorAll) {
+        inputs.push(...Array.from(node.querySelectorAll('input, textarea, select')));
+      }
+      if (node.shadowRoot) {
+        traverse(node.shadowRoot);
+      }
+      const children = node.children || [];
+      for (let i = 0; i < children.length; i++) {
+        if (children[i].shadowRoot) {
+          traverse(children[i].shadowRoot);
+        }
+      }
+    };
+    traverse(root);
+    return inputs;
+  }
+
+  function isElementVisible(el) {
+    if (!el || !el.isConnected) return false;
+    if (el.type === 'hidden') return false;
+    const style = window.getComputedStyle(el);
+    if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
+    const rect = el.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) {
+      return el.offsetWidth > 0 && el.offsetHeight > 0;
+    }
+    return true;
+  }
+
+  function findBestPasswordInput(inputs) {
+    const candidates = [];
+    for (const el of inputs) {
+      if (el.tagName.toLowerCase() !== 'input') continue;
+      if (el.disabled || el.readOnly) continue;
+
+      let score = 0;
+      const type = (el.type || '').toLowerCase();
+      const name = (el.name || '').toLowerCase();
+      const id = (el.id || '').toLowerCase();
+      const placeholder = (el.placeholder || '').toLowerCase();
+      const autocomplete = (el.autocomplete || '').toLowerCase();
+
+      if (type === 'password') score += 100;
+      if (autocomplete.includes('password')) score += 80;
+      if (name.includes('pass') || name.includes('pwd')) score += 60;
+      if (id.includes('pass') || id.includes('pwd')) score += 50;
+      if (placeholder.includes('pass') || placeholder.includes('pwd')) score += 40;
+
+      if (!isElementVisible(el)) score -= 250;
+
+      if (score > 0) candidates.push({ el, score });
+    }
+
+    candidates.sort((a, b) => b.score - a.score);
+    return candidates.length > 0 ? candidates[0].el : null;
+  }
+
+  function findBestUsernameInput(inputs, passwordInput) {
+    const candidates = [];
+    const parentContainer = passwordInput
+      ? (passwordInput.form || passwordInput.closest('form, [role="form"], [class*="login" i], [class*="auth" i], [class*="signin" i], [id*="login" i], [id*="auth" i]'))
+      : null;
+
+    for (const el of inputs) {
+      if (el.tagName.toLowerCase() !== 'input') continue;
+      if (el === passwordInput) continue;
+      if (el.disabled || el.readOnly) continue;
+      if (['password', 'checkbox', 'radio', 'file', 'button', 'submit', 'reset', 'hidden', 'image'].includes((el.type || '').toLowerCase())) continue;
+
+      let score = 0;
+      const type = (el.type || '').toLowerCase();
+      const name = (el.name || '').toLowerCase();
+      const id = (el.id || '').toLowerCase();
+      const placeholder = (el.placeholder || '').toLowerCase();
+      const autocomplete = (el.autocomplete || '').toLowerCase();
+      const ariaLabel = (el.getAttribute('aria-label') || '').toLowerCase();
+
+      // Strongly penalize search, query, and filter inputs
+      if (/search|query|filter|find|coupon|promo|discount|newsletter/i.test(`${name} ${id} ${placeholder} ${el.className || ''}`)) {
+        score -= 400;
+      }
+
+      if (autocomplete === 'username' || autocomplete === 'email') score += 120;
+      else if (autocomplete.includes('username') || autocomplete.includes('email')) score += 90;
+
+      if (type === 'email') score += 80;
+      if (/(username|user_name|userid|user_id|login|email|identifier|account)/i.test(name)) score += 70;
+      if (/(username|user_name|userid|user_id|login|email|identifier|account)/i.test(id)) score += 60;
+      if (/(username|email|account|user|login)/i.test(placeholder)) score += 50;
+      if (/(username|email|account|user|login)/i.test(ariaLabel)) score += 50;
+
+      // Container proximity
+      if (parentContainer && parentContainer.contains(el)) {
+        score += 40;
+      }
+      if (passwordInput && (el.compareDocumentPosition(passwordInput) & Node.DOCUMENT_POSITION_FOLLOWING)) {
+        score += 30; // comes before password in DOM order
+      }
+
+      // Visible text input inside the same form/container
+      if ((type === 'text' || !type) && parentContainer && parentContainer.contains(el)) {
+        score += 25;
+      }
+
+      if (!isElementVisible(el)) score -= 250;
+
+      if (score > 0) candidates.push({ el, score });
+    }
+
+    candidates.sort((a, b) => b.score - a.score);
+    return candidates.length > 0 ? candidates[0].el : null;
+  }
+
+  function findBestSubmitButton(form, anchorEl) {
+    const scope = form || anchorEl?.closest('div, section, main') || document;
+    const buttons = Array.from(scope.querySelectorAll('button, input[type="submit"], input[type="button"], [role="button"], a.btn, a.button'));
+
+    for (const btn of buttons) {
+      if (!isElementVisible(btn)) continue;
+      const type = (btn.type || '').toLowerCase();
+      if (type === 'submit') return btn;
+
+      const txt = (btn.textContent || btn.value || '').trim().toLowerCase();
+      if (/^(log\s*in|sign\s*in|sign-in|login|next|continue|submit|proceed|enter)$/i.test(txt)) {
+        return btn;
+      }
+    }
+
+    const allButtons = Array.from(document.querySelectorAll('button[type="submit"], input[type="submit"], #login-btn, #submit, button.login-btn, button.btn-login'));
+    return allButtons.find(isElementVisible) || null;
+  }
+
+  function highlightAutofillField(el, label) {
+    try {
+      const origOutline = el.style.outline;
+      const origBoxShadow = el.style.boxShadow;
+      const origTransition = el.style.transition;
+
+      el.style.transition = 'all 0.3s ease';
+      el.style.outline = '2px solid #10b981';
+      el.style.boxShadow = '0 0 12px rgba(16, 185, 129, 0.6)';
+
+      if (actionExecutor && actionExecutor.highlightElement) {
+        actionExecutor.highlightElement(el, label || 'AUTOFILL');
+      }
+
+      setTimeout(() => {
+        el.style.outline = origOutline;
+        el.style.boxShadow = origBoxShadow;
+        el.style.transition = origTransition;
+      }, 2500);
+    } catch (e) {}
+  }
+
   // --- Auto-Login & Credential Injection ---
   async function handleAutofillAndLogin(data, sendResponse) {
     const { username, password, autoSubmit } = data;
     try {
-      const passwordInput = document.querySelector('input[type="password"]');
-      let usernameInput = null;
-      if (passwordInput) {
-        const form = passwordInput.closest('form');
-        if (form) {
-          usernameInput = form.querySelector('input[type="text"], input[type="email"], input[name*="user" i], input[name*="login" i], input[name*="email" i], input[id*="user" i], input[id*="email" i]');
-        }
-      }
-      if (!usernameInput) {
-        const allInputs = Array.from(document.querySelectorAll('input:not([type="hidden"]):not([type="password"])'));
-        usernameInput = allInputs.find(input => {
-          const type = (input.type || '').toLowerCase();
-          const name = (input.name || '').toLowerCase();
-          const id = (input.id || '').toLowerCase();
-          return type === 'email' || type === 'text' || name.includes('user') || name.includes('email') || id.includes('user') || id.includes('email');
-        });
-      }
+      const allInputs = getAllDocumentInputs();
+      const passwordInput = findBestPasswordInput(allInputs);
+      const usernameInput = findBestUsernameInput(allInputs, passwordInput);
 
       if (!passwordInput && !usernameInput) {
-        sendResponse({ success: false, error: 'No login input fields found on page' });
+        sendResponse({
+          success: false,
+          error: 'No login input fields found on this page. Make sure the login form is visible.'
+        });
         return;
       }
+
+      let filledAny = false;
 
       // Fill username
       if (usernameInput && username) {
         setNativeInputValue(usernameInput, username);
-        if (actionExecutor) actionExecutor.highlightElement(usernameInput, 'AUTOFILL USER');
+        highlightAutofillField(usernameInput, 'Username Filled 👤');
+        filledAny = true;
       }
 
       // Fill password
       if (passwordInput && password) {
         setNativeInputValue(passwordInput, password);
-        if (actionExecutor) actionExecutor.highlightElement(passwordInput, 'AUTOFILL PASS');
+        highlightAutofillField(passwordInput, 'Password Filled 🔑');
+        filledAny = true;
       }
 
-      await new Promise(r => setTimeout(r, 350));
+      if (!filledAny) {
+        sendResponse({ success: false, error: 'Could not inject credentials into form fields' });
+        return;
+      }
+
+      if (actionExecutor) {
+        actionExecutor.showFloatingBadge(`🛡️ Autofilled credentials for ${window.location.hostname}`);
+      }
 
       // Auto-submit if requested
       let submitted = false;
       if (autoSubmit) {
-        const submitBtn = (form ? form.querySelector('button[type="submit"], input[type="submit"]') : null)
-          || document.querySelector('button[type="submit"], input[type="submit"], button#login-btn, #submit');
+        await new Promise((r) => setTimeout(r, 450));
+        const activeForm = (passwordInput && passwordInput.form) || (usernameInput && usernameInput.form);
+        const submitBtn = findBestSubmitButton(activeForm, passwordInput || usernameInput);
 
         if (submitBtn) {
           if (actionExecutor) {
-            await actionExecutor.clickElement(submitBtn.id ? `#${submitBtn.id}` : (submitBtn.className ? `.${submitBtn.className.split(' ')[0]}` : 'button[type="submit"]'));
+            await actionExecutor.clickElement(submitBtn.id ? `#${submitBtn.id}` : submitBtn);
           } else {
             submitBtn.click();
           }
           submitted = true;
-        } else if (form) {
-          form.requestSubmit ? form.requestSubmit() : form.submit();
-          submitted = true;
+        } else if (activeForm) {
+          try {
+            activeForm.requestSubmit ? activeForm.requestSubmit() : activeForm.submit();
+            submitted = true;
+          } catch (e) {
+            console.warn('[PrivacyScreen Agent] Form submission fallback:', e);
+          }
         }
-      }
-
-      if (actionExecutor) {
-        actionExecutor.showFloatingBadge(`🛡️ Logged in with local credentials for ${window.location.hostname}`);
       }
 
       sendResponse({ success: true, filled: true, submitted });
     } catch (err) {
+      console.error('[PrivacyScreen Agent] Autofill error:', err);
       sendResponse({ success: false, error: err.message });
     }
   }
 
   function setNativeInputValue(el, val) {
     if (!el) return;
-    el.focus();
+    const stringVal = String(val !== undefined && val !== null ? val : '');
+
+    try {
+      el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    } catch (e) {}
+    try {
+      el.focus();
+    } catch (e) {}
+
     const tag = (el.tagName || '').toLowerCase();
     if (tag === 'select') {
-      el.value = val;
-      el.dispatchEvent(new Event('input', { bubbles: true }));
-      el.dispatchEvent(new Event('change', { bubbles: true }));
+      el.value = stringVal;
+      el.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
       return;
     }
-    if (tag === 'textarea') {
-      const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')?.set;
-      if (setter) setter.call(el, val !== undefined && val !== null ? val : '');
-      else el.value = val !== undefined && val !== null ? val : '';
-      el.dispatchEvent(new Event('input', { bubbles: true }));
-      el.dispatchEvent(new Event('change', { bubbles: true }));
-      return;
-    }
-    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
-    if (setter) {
-      setter.call(el, val !== undefined && val !== null ? val : '');
+
+    try {
+      el.dispatchEvent(new InputEvent('beforeinput', {
+        bubbles: true,
+        cancelable: true,
+        composed: true,
+        inputType: 'insertReplacementText',
+        data: stringVal
+      }));
+    } catch (e) {}
+
+    const proto = tag === 'textarea'
+      ? window.HTMLTextAreaElement.prototype
+      : window.HTMLInputElement.prototype;
+
+    const descriptor = Object.getOwnPropertyDescriptor(proto, 'value');
+    const prevVal = el.value;
+
+    if (descriptor && descriptor.set) {
+      descriptor.set.call(el, stringVal);
     } else {
-      el.value = val !== undefined && val !== null ? val : '';
+      el.value = stringVal;
     }
-    el.dispatchEvent(new Event('input', { bubbles: true }));
-    el.dispatchEvent(new Event('change', { bubbles: true }));
+
+    // Reset React 15-19 internal value tracker so synthetic ChangeEvent fires
+    if (el._valueTracker) {
+      try {
+        el._valueTracker.setValue(prevVal);
+      } catch (e) {}
+    }
+
+    for (const key in el) {
+      if (key.startsWith('__reactValueTracker') && el[key] && typeof el[key].setValue === 'function') {
+        try {
+          el[key].setValue(prevVal);
+        } catch (e) {}
+      }
+    }
+
+    el.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'Unidentified' }));
+
+    try {
+      el.dispatchEvent(new InputEvent('input', {
+        bubbles: true,
+        cancelable: true,
+        composed: true,
+        inputType: 'insertReplacementText',
+        data: stringVal
+      }));
+    } catch (e) {
+      el.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+    }
+
+    el.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
+    el.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, cancelable: true, key: 'Unidentified' }));
+    el.dispatchEvent(new Event('blur', { bubbles: true, composed: true }));
   }
 
   // --- OpenAgent Form Autofill Engine ---
@@ -272,21 +481,30 @@
 
       let filledCount = 0;
       let targetForm = null;
+      const allInputs = getAllDocumentInputs();
 
       for (const item of fieldsData) {
         const { selector, value, key } = item;
-        if (!selector || value === undefined || value === null || value === '') continue;
+        if (value === undefined || value === null || value === '') continue;
 
-        let el = document.querySelector(selector);
+        let el = null;
+        if (selector) {
+          try { el = document.querySelector(selector); } catch (e) {}
+        }
         if (!el && key) {
-          el = document.querySelector(`[name="${key}" i], [id="${key}" i]`);
+          const k = key.toLowerCase();
+          el = allInputs.find((input) => {
+            const n = (input.name || '').toLowerCase();
+            const i = (input.id || '').toLowerCase();
+            const p = (input.placeholder || '').toLowerCase();
+            const a = (input.autocomplete || '').toLowerCase();
+            return n === k || i === k || a.includes(k) || p.includes(k) || n.includes(k);
+          });
         }
 
-        if (el) {
+        if (el && isElementVisible(el)) {
           setNativeInputValue(el, value);
-          if (actionExecutor) {
-            actionExecutor.highlightElement(el, `OPENAGENT: ${key || 'FIELD'}`);
-          }
+          highlightAutofillField(el, `FILLED: ${key || 'FIELD'}`);
           filledCount++;
           if (!targetForm && el.form) {
             targetForm = el.form;
@@ -301,14 +519,17 @@
 
       let submitted = false;
       if (autoSubmit && targetForm) {
-        await new Promise((r) => setTimeout(r, 300));
-        const submitBtn = targetForm.querySelector('button[type="submit"], input[type="submit"]');
+        await new Promise((r) => setTimeout(r, 400));
+        const submitBtn = findBestSubmitButton(targetForm, null);
         if (submitBtn) {
           submitBtn.click();
+          submitted = true;
         } else {
-          targetForm.requestSubmit ? targetForm.requestSubmit() : targetForm.submit();
+          try {
+            targetForm.requestSubmit ? targetForm.requestSubmit() : targetForm.submit();
+            submitted = true;
+          } catch (e) {}
         }
-        submitted = true;
       }
 
       sendResponse({ success: true, filledCount, submitted });

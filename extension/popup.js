@@ -304,8 +304,14 @@ document.addEventListener('DOMContentLoaded', async () => {
       (res) => {
         setProcessingState(false);
         if (res && res.success) {
+          if (res.submitted) {
+            showToast(`Logged into ${currentHostname}! 🚀`);
+          } else {
+            showToast(`Credentials filled on page! ✨`);
+          }
           showLog(`✅ Successfully logged in to ${currentHostname} with local storage credentials!`);
         } else {
+          showToast(res?.error || `Could not find login fields on ${currentHostname} ⚠️`, 4000);
           showLog(`❌ Auto-login failed: ${res?.error || 'Unknown error'}`);
         }
       }
@@ -563,8 +569,10 @@ document.addEventListener('DOMContentLoaded', async () => {
       (res) => {
         setProcessingState(false);
         if (res && res.success) {
+          showToast(`OpenAgent filled ${res.filledCount} field${res.filledCount === 1 ? '' : 's'}! ✨`);
           showLog(`✅ OpenAgent filled ${res.filledCount} fields!${res.submitted ? ' (Form submitted)' : ''}`);
         } else {
+          showToast(res?.error || 'Failed to inject fields into form ⚠️', 4000);
           showLog(`❌ Autofill error: ${res?.error || 'Failed to inject fields'}`);
         }
       }
@@ -882,19 +890,32 @@ document.addEventListener('DOMContentLoaded', async () => {
       throw new Error('Biometric authentication is not supported by your browser environment.');
     }
 
+    let isAvailable = false;
+    try {
+      if (typeof PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable === 'function') {
+        isAvailable = await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
+      }
+    } catch (e) {}
+
+    if (!isAvailable) {
+      throw new Error('Biometric platform sensor (Touch ID / Face ID) is not available on this device.');
+    }
+
     const challenge = new Uint8Array(32);
     crypto.getRandomValues(challenge);
 
     const userId = new Uint8Array(16);
     crypto.getRandomValues(userId);
 
+    const rp = { name: 'PrivacyScreen Agent Vault' };
+    if (window.location.protocol !== 'chrome-extension:' && window.location.hostname && window.location.hostname.includes('.')) {
+      rp.id = window.location.hostname;
+    }
+
     const createOptions = {
       publicKey: {
         challenge,
-        rp: {
-          name: 'PrivacyScreen Agent Vault',
-          id: window.location.hostname || undefined
-        },
+        rp,
         user: {
           id: userId,
           name: username,
@@ -909,7 +930,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           userVerification: 'required',
           residentKey: 'discouraged'
         },
-        timeout: 60000,
+        timeout: 15000,
         attestation: 'none'
       }
     };
@@ -931,7 +952,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const getOptions = {
       publicKey: {
         challenge,
-        timeout: 60000,
+        timeout: 15000,
         userVerification: 'required',
         allowCredentials: credentialIdB64 ? [
           {
@@ -941,6 +962,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         ] : []
       }
     };
+
+    if (window.location.protocol !== 'chrome-extension:' && window.location.hostname && window.location.hostname.includes('.')) {
+      getOptions.publicKey.rpId = window.location.hostname;
+    }
 
     const assertion = await navigator.credentials.get(getOptions);
     if (!assertion) throw new Error('Biometric verification cancelled.');
@@ -1005,7 +1030,19 @@ document.addEventListener('DOMContentLoaded', async () => {
           const localData = await chrome.storage.local.get(['privacy_agent_vault_v2', 'privacy_agent_auth']);
           currentVaultEntries = Array.isArray(localData.privacy_agent_vault_v2) ? localData.privacy_agent_vault_v2 : [];
           hasMasterLock = !!localData.privacy_agent_auth?.hasMasterPin;
-          isVaultLocked = false;
+          
+          let sessionUnlocked = false;
+          try {
+            if (chrome.storage && chrome.storage.session) {
+              const sess = await chrome.storage.session.get(['isUnlocked', 'unlockedAt']);
+              sessionUnlocked = !!sess?.isUnlocked;
+            }
+          } catch (e) {}
+
+          isVaultLocked = hasMasterLock && !sessionUnlocked;
+          if (isVaultLocked) {
+            currentVaultEntries = currentVaultEntries.map((e) => ({ ...e, password: '••••••••' }));
+          }
         } catch (e) {
           currentVaultEntries = currentVaultEntries || [];
         }
@@ -1211,7 +1248,25 @@ document.addEventListener('DOMContentLoaded', async () => {
       btn.addEventListener('click', () => {
         const hostname = btn.getAttribute('data-host');
         const username = btn.getAttribute('data-user');
-        const password = btn.getAttribute('data-pass');
+        let password = btn.getAttribute('data-pass');
+
+        if (isVaultLocked) {
+          showToast('🔒 Database is locked. Unlock with PIN first.');
+          const tabBtn = document.querySelector('.tab-btn[data-tab="databaseTab"]');
+          if (tabBtn) tabBtn.click();
+          if (pinUnlockInput) pinUnlockInput.focus();
+          return;
+        }
+
+        // If password attribute was masked, look up decrypted password from currentVaultEntries
+        if (!password || password === '••••••••') {
+          const card = btn.closest('.pm-card');
+          const id = card ? card.getAttribute('data-id') : null;
+          const entry = currentVaultEntries.find((e) => (id && e.id === id) || (e.hostname === hostname && e.username === username));
+          if (entry && entry.password && entry.password !== '••••••••') {
+            password = entry.password;
+          }
+        }
 
         setProcessingState(true);
         showLog(`⚡ Autofilling credentials for ${hostname}...`);
@@ -1224,11 +1279,15 @@ document.addEventListener('DOMContentLoaded', async () => {
           (res) => {
             setProcessingState(false);
             if (res && res.success) {
-              showToast(`Logged into ${hostname}! 🚀`);
+              if (res.submitted) {
+                showToast(`Logged into ${hostname}! 🚀`);
+              } else {
+                showToast(`Credentials filled on page! ✨`);
+              }
               showLog(`✅ Autofilled credentials on ${hostname}`);
             } else {
-              showToast(`Credentials filled on page! ✨`);
-              showLog(`Autofill notice: ${res?.error || 'Fields filled on page'}`);
+              showToast(res?.error || 'Could not find login fields on this page ⚠️', 4000);
+              showLog(`❌ Autofill error: ${res?.error || 'Fields not found'}`);
             }
           }
         );
@@ -1496,31 +1555,81 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   // Biometrics & PIN Unlock Handlers
+  // Direct persistent authentication lock helper (100% on-device guaranteed)
+  async function saveAuthLockDirectly(salt, pinHash, enableBio, bioCredId) {
+    const authConfig = {
+      hasMasterPin: !!pinHash,
+      pinSalt: salt || '',
+      pinHash: pinHash || '',
+      biometricsEnabled: !!enableBio && !!bioCredId,
+      biometricCredentialId: bioCredId || '',
+      autoLockMinutes: 15
+    };
+
+    // 1. Direct persistent save to chrome.storage.local (always works even if background is idle)
+    await chrome.storage.local.set({ privacy_agent_auth: authConfig });
+
+    // 2. Mark session as unlocked directly
+    try {
+      if (chrome.storage && chrome.storage.session) {
+        await chrome.storage.session.set({
+          isUnlocked: true,
+          unlockedAt: Date.now()
+        });
+      }
+    } catch (e) {}
+
+    // 3. Notify background service worker to sync memory state
+    try {
+      chrome.runtime.sendMessage(
+        {
+          type: 'AUTH_SETUP_LOCK',
+          data: authConfig
+        },
+        () => {
+          if (chrome.runtime.lastError) {}
+        }
+      );
+    } catch (e) {}
+
+    return authConfig;
+  }
+
+  // Biometrics & PIN Unlock Handlers
   if (biometricUnlockBtn) {
     biometricUnlockBtn.addEventListener('click', async () => {
-      chrome.runtime.sendMessage({ type: 'AUTH_GET_STATUS' }, async (statusRes) => {
-        if (chrome.runtime.lastError || !statusRes) return;
-        const credId = statusRes.biometricCredentialId || '';
+      let credId = '';
+      try {
+        const localData = await chrome.storage.local.get('privacy_agent_auth');
+        credId = localData?.privacy_agent_auth?.biometricCredentialId || '';
+      } catch (e) {}
+
+      try {
+        if (biometricBtnLabel) biometricBtnLabel.textContent = 'Verifying Touch ID / Biometrics...';
+        await verifyDeviceBiometrics(credId);
 
         try {
-          if (biometricBtnLabel) biometricBtnLabel.textContent = 'Verifying Touch ID / Biometrics...';
-          await verifyDeviceBiometrics(credId);
-
-          chrome.runtime.sendMessage({ type: 'AUTH_SET_UNLOCKED', unlocked: true }, () => {
-            if (biometricBtnLabel) biometricBtnLabel.textContent = 'Unlock with Touch ID / Biometrics';
-            showToast('Vault unlocked via biometrics! 🔓');
-            loadPasswordManager();
-          });
-        } catch (err) {
-          if (biometricBtnLabel) biometricBtnLabel.textContent = 'Unlock with Touch ID / Biometrics';
-          console.warn('Biometric verification failed:', err);
-          if (pinErrorMsg) {
-            pinErrorMsg.textContent = 'Biometric check cancelled or unavailable. Enter PIN below.';
-            pinErrorMsg.style.display = 'block';
+          if (chrome.storage && chrome.storage.session) {
+            await chrome.storage.session.set({ isUnlocked: true, unlockedAt: Date.now() });
           }
-          if (pinUnlockInput) pinUnlockInput.focus();
+        } catch (e) {}
+
+        chrome.runtime.sendMessage({ type: 'AUTH_SET_UNLOCKED', unlocked: true }, () => {
+          if (chrome.runtime.lastError) {}
+        });
+
+        if (biometricBtnLabel) biometricBtnLabel.textContent = 'Unlock with Touch ID / Biometrics';
+        showToast('Vault unlocked via biometrics! 🔓');
+        await loadPasswordManager();
+      } catch (err) {
+        if (biometricBtnLabel) biometricBtnLabel.textContent = 'Unlock with Touch ID / Biometrics';
+        console.warn('Biometric verification failed:', err);
+        if (pinErrorMsg) {
+          pinErrorMsg.textContent = 'Biometric check cancelled or unavailable. Enter PIN below.';
+          pinErrorMsg.style.display = 'block';
         }
-      });
+        if (pinUnlockInput) pinUnlockInput.focus();
+      }
     });
   }
 
@@ -1534,18 +1643,46 @@ document.addEventListener('DOMContentLoaded', async () => {
       return;
     }
 
-    chrome.runtime.sendMessage({ type: 'AUTH_GET_STATUS' }, async (statusRes) => {
-      if (chrome.runtime.lastError || !statusRes) return;
+    try {
+      // 1. Direct local storage read for instant verification without service worker dependency
+      let salt = '';
+      let storedHash = '';
+      try {
+        const localData = await chrome.storage.local.get('privacy_agent_auth');
+        if (localData?.privacy_agent_auth) {
+          salt = localData.privacy_agent_auth.pinSalt || '';
+          storedHash = localData.privacy_agent_auth.pinHash || '';
+        }
+      } catch (e) {}
 
-      const salt = statusRes.pinSalt || '';
       const pinHash = await hashPin(pin, salt);
 
-      chrome.runtime.sendMessage({ type: 'AUTH_VERIFY_PIN', data: { pinHash } }, (verRes) => {
+      if (storedHash && pinHash === storedHash) {
+        try {
+          if (chrome.storage && chrome.storage.session) {
+            await chrome.storage.session.set({ isUnlocked: true, unlockedAt: Date.now() });
+          }
+        } catch (e) {}
+        try {
+          chrome.runtime.sendMessage({ type: 'AUTH_SET_UNLOCKED', unlocked: true }, () => {
+            if (chrome.runtime.lastError) {}
+          });
+        } catch (e) {}
+
+        if (pinErrorMsg) pinErrorMsg.style.display = 'none';
+        if (pinUnlockInput) pinUnlockInput.value = '';
+        showToast('Vault unlocked successfully! 🔓');
+        await loadPasswordManager();
+        return;
+      }
+
+      // 2. Also try background verify as fallback
+      chrome.runtime.sendMessage({ type: 'AUTH_VERIFY_PIN', data: { pinHash } }, async (verRes) => {
         if (verRes && verRes.valid) {
           if (pinErrorMsg) pinErrorMsg.style.display = 'none';
           if (pinUnlockInput) pinUnlockInput.value = '';
           showToast('Vault unlocked successfully! 🔓');
-          loadPasswordManager();
+          await loadPasswordManager();
         } else {
           if (pinErrorMsg) {
             pinErrorMsg.textContent = 'Incorrect PIN or passcode. Try again.';
@@ -1554,7 +1691,12 @@ document.addEventListener('DOMContentLoaded', async () => {
           if (pinUnlockInput) pinUnlockInput.select();
         }
       });
-    });
+    } catch (err) {
+      if (pinErrorMsg) {
+        pinErrorMsg.textContent = 'Failed to verify PIN. Please try again.';
+        pinErrorMsg.style.display = 'block';
+      }
+    }
   }
 
   if (pinUnlockBtn) pinUnlockBtn.addEventListener('click', attemptPinUnlock);
@@ -1627,40 +1769,31 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (setupErrorMsg) setupErrorMsg.style.display = 'none';
 
       let bioCredId = '';
+      let bioNote = '';
       if (enableBio) {
         try {
           bioCredId = await registerDeviceBiometrics();
         } catch (err) {
           console.warn('Biometric setup warning:', err.message);
+          bioNote = ' (Master PIN active; Device biometrics not supported on this origin)';
         }
       }
 
       const salt = generateSalt();
       const pinHash = await hashPin(pin, salt);
 
-      chrome.runtime.sendMessage(
-        {
-          type: 'AUTH_SETUP_LOCK',
-          data: {
-            pinSalt: salt,
-            pinHash,
-            biometricsEnabled: !!bioCredId,
-            biometricCredentialId: bioCredId
-          }
-        },
-        (res) => {
-          if (res && res.success) {
-            lockSetupModal.style.display = 'none';
-            showToast('Security protection activated! 🛡️');
-            loadPasswordManager();
-          } else {
-            if (setupErrorMsg) {
-              setupErrorMsg.textContent = res?.error || 'Failed to save security lock.';
-              setupErrorMsg.style.display = 'block';
-            }
-          }
+      try {
+        await saveAuthLockDirectly(salt, pinHash, !!bioCredId, bioCredId);
+        lockSetupModal.style.display = 'none';
+        showToast(`Security protection activated! 🛡️${bioNote ? ' (Master PIN Set)' : ''}`);
+        await loadPasswordManager();
+      } catch (err) {
+        console.error('Failed to save security lock:', err);
+        if (setupErrorMsg) {
+          setupErrorMsg.textContent = err.message || 'Failed to save security lock.';
+          setupErrorMsg.style.display = 'block';
         }
-      );
+      }
     });
   }
 
