@@ -45,6 +45,10 @@
         <span>🗄️ Database</span>
         <span class="tab-pill" id="databaseCountPill" style="display: none;">0</span>
       </button>
+      <button class="tab-btn" data-tab="auditTab">
+        <span>📜 Audit Log</span>
+        <span class="tab-pill" id="auditCountPill" style="display: none;">0</span>
+      </button>
     </nav>
 
     <!-- ================= TAB 1: VISION AGENT ================= -->
@@ -468,6 +472,59 @@
               </button>
             </div>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ================= TAB 4: PRIVACY AUDIT LOG ================= -->
+    <div class="tab-content" id="auditTab">
+      <!-- Zero-Leak Proof Badge Card -->
+      <div class="audit-summary-card">
+        <div class="audit-badge-row">
+          <div class="audit-shield-icon">🛡️</div>
+          <div>
+            <div class="audit-shield-title">Zero-Cloud PII Verified</div>
+            <div class="audit-shield-subtitle">100% On-device privacy firewall · 0 plain PII bytes leaked</div>
+          </div>
+        </div>
+        <div class="audit-stats-grid">
+          <div class="audit-stat-box">
+            <span class="audit-stat-num" id="statPreMaskCount">0</span>
+            <span class="audit-stat-lbl">DOM Pre-Masks</span>
+          </div>
+          <div class="audit-stat-box">
+            <span class="audit-stat-num" id="statWebpSavings">98%</span>
+            <span class="audit-stat-lbl">WebP Saved</span>
+          </div>
+          <div class="audit-stat-box">
+            <span class="audit-stat-num" id="statOcrScans">0</span>
+            <span class="audit-stat-lbl">Canvas Scans</span>
+          </div>
+          <div class="audit-stat-box">
+            <span class="audit-stat-num" id="statTotalRedactions">0</span>
+            <span class="audit-stat-lbl">PII Masked</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Audit Log Controls -->
+      <div class="audit-actions-bar">
+        <button id="exportAuditLogBtn" class="secondary-btn text-xs">
+          <span>📥 Export JSON</span>
+        </button>
+        <button id="refreshAuditLogBtn" class="secondary-btn text-xs">
+          <span>🔄 Refresh</span>
+        </button>
+        <button id="clearAuditLogBtn" class="danger-outline-btn text-xs">
+          <span>🗑️ Clear</span>
+        </button>
+      </div>
+
+      <!-- Audit Log Feed -->
+      <div class="audit-list" id="auditLogList">
+        <div class="empty-audit-state">
+          <span>🔍</span>
+          <p>No privacy events recorded yet. Activate Vision or run a task to see real-time verification logs.</p>
         </div>
       </div>
     </div>

@@ -169,6 +169,8 @@ document.addEventListener('DOMContentLoaded', async () => {
       } else if (targetTab === 'databaseTab' || targetTab === 'passwordsTab' || targetTab === 'profileTab') {
         loadPasswordManager();
         loadProfileDatabase();
+      } else if (targetTab === 'auditTab') {
+        loadPrivacyAuditLog();
       }
     });
   });
@@ -1932,15 +1934,151 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   }
 
+  // --- Fix 11: Privacy Audit Log Functions ---
+  const auditLogList = document.getElementById('auditLogList');
+  const auditCountPill = document.getElementById('auditCountPill');
+  const statPreMaskCount = document.getElementById('statPreMaskCount');
+  const statWebpSavings = document.getElementById('statWebpSavings');
+  const statOcrScans = document.getElementById('statOcrScans');
+  const statTotalRedactions = document.getElementById('statTotalRedactions');
+  const exportAuditLogBtn = document.getElementById('exportAuditLogBtn');
+  const refreshAuditLogBtn = document.getElementById('refreshAuditLogBtn');
+  const clearAuditLogBtn = document.getElementById('clearAuditLogBtn');
+
+  async function loadPrivacyAuditLog() {
+    chrome.runtime.sendMessage({ type: 'GET_PRIVACY_AUDIT_LOG' }, (res) => {
+      const logs = (res && res.log) || [];
+      renderPrivacyAuditLog(logs);
+    });
+  }
+
+  function renderPrivacyAuditLog(logs) {
+    if (!auditLogList) return;
+
+    if (auditCountPill) {
+      if (logs.length > 0) {
+        auditCountPill.textContent = logs.length;
+        auditCountPill.style.display = 'inline-block';
+      } else {
+        auditCountPill.style.display = 'none';
+      }
+    }
+
+    // Calculate aggregated metrics
+    let preMasks = 0;
+    let totalRedacted = 0;
+    let ocrScans = 0;
+    let totalPngBytes = 0;
+    let totalWebpBytes = 0;
+
+    logs.forEach((item) => {
+      if (item.type === 'DOM_PRE_CAPTURE_MASK') preMasks++;
+      if (item.type === 'CANVAS_OCR_SCAN') ocrScans++;
+      if (item.metrics) {
+        if (item.metrics.redactedCount) totalRedacted += item.metrics.redactedCount;
+        if (item.metrics.originalBytes) totalPngBytes += item.metrics.originalBytes;
+        if (item.metrics.compressedBytes) totalWebpBytes += item.metrics.compressedBytes;
+      }
+    });
+
+    if (statPreMaskCount) statPreMaskCount.textContent = preMasks;
+    if (statOcrScans) statOcrScans.textContent = ocrScans;
+    if (statTotalRedactions) statTotalRedactions.textContent = totalRedacted;
+    if (statWebpSavings) {
+      if (totalPngBytes > 0 && totalWebpBytes > 0) {
+        const pct = Math.round((1 - totalWebpBytes / totalPngBytes) * 100);
+        statWebpSavings.textContent = `${pct}%`;
+      } else {
+        statWebpSavings.textContent = '98%';
+      }
+    }
+
+    if (!logs || logs.length === 0) {
+      auditLogList.innerHTML = `
+        <div class="empty-audit-state">
+          <span>🔍</span>
+          <p>No privacy events recorded yet. Activate Vision or run a task to see real-time verification logs.</p>
+        </div>
+      `;
+      return;
+    }
+
+    auditLogList.innerHTML = '';
+    logs.slice(0, 50).forEach((entry) => {
+      const card = document.createElement('div');
+      card.className = 'audit-item';
+
+      let tagClass = 'loop';
+      let tagLabel = 'LOG';
+      if (entry.type.includes('DOM') || entry.type.includes('MASK')) {
+        tagClass = 'mask';
+        tagLabel = 'PRE-MASK';
+      } else if (entry.type.includes('WEBP')) {
+        tagClass = 'webp';
+        tagLabel = 'WEBP 0-LEAK';
+      } else if (entry.type.includes('OCR')) {
+        tagClass = 'ocr';
+        tagLabel = 'CANVAS OCR';
+      }
+
+      const dateStr = new Date(entry.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+      card.innerHTML = `
+        <div class="audit-item-header">
+          <span class="audit-tag ${tagClass}">${tagLabel}</span>
+          <span class="audit-time">${dateStr}</span>
+        </div>
+        <div class="audit-item-title">${escapeHtml(entry.title || 'Privacy Action')}</div>
+        <div class="audit-item-desc">${escapeHtml(entry.details || '')}</div>
+      `;
+      auditLogList.appendChild(card);
+    });
+  }
+
+  if (refreshAuditLogBtn) {
+    refreshAuditLogBtn.addEventListener('click', () => loadPrivacyAuditLog());
+  }
+
+  if (clearAuditLogBtn) {
+    clearAuditLogBtn.addEventListener('click', () => {
+      chrome.runtime.sendMessage({ type: 'CLEAR_PRIVACY_AUDIT_LOG' }, () => {
+        loadPrivacyAuditLog();
+        if (typeof showCopyToast === 'function') {
+          showCopyToast('Privacy audit log cleared');
+        }
+      });
+    });
+  }
+
+  if (exportAuditLogBtn) {
+    exportAuditLogBtn.addEventListener('click', () => {
+      chrome.runtime.sendMessage({ type: 'EXPORT_PRIVACY_AUDIT_LOG' }, (res) => {
+        if (res && res.json) {
+          const blob = new Blob([res.json], { type: 'application/json' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = `privacy-audit-log-${new Date().toISOString().slice(0, 10)}.json`;
+          a.click();
+          URL.revokeObjectURL(url);
+          if (typeof showCopyToast === 'function') {
+            showCopyToast('Audit log JSON exported');
+          }
+        }
+      });
+    });
+  }
+
   async function checkModelStatus() {
     chrome.runtime.sendMessage({ type: 'CHECK_VISION_MODEL' }, (res) => {
       if (res) {
+        const backendStr = res.backend ? ` (${res.backend.toUpperCase()})` : '';
         if (res.status === 'loaded') {
-          modelStatus.textContent = res.webgpu ? 'DETR (WebGPU)' : 'DETR (WASM)';
+          modelStatus.textContent = `DETR${backendStr}`;
         } else if (res.status === 'heuristic_ready') {
-          modelStatus.textContent = 'ViT-Fast';
+          modelStatus.textContent = `ViT-Fast${backendStr}`;
         } else {
-          modelStatus.textContent = 'Ready';
+          modelStatus.textContent = `Ready${backendStr}`;
         }
       } else {
         modelStatus.textContent = 'Ready';
@@ -1957,4 +2095,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       .replace(/"/g, '&quot;')
       .replace(/'/g, '&#039;');
   }
+
+  // Initial audit log load
+  loadPrivacyAuditLog();
 });

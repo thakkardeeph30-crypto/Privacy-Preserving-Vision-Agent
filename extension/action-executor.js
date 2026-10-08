@@ -104,7 +104,8 @@ class ActionExecutor {
   }
 
   /**
-   * Clicks an element with visual highlight and full event dispatching.
+   * Clicks an element with visual highlight, multi-strategy resolution, and full event chain.
+   * Fix 7: Multi-strategy + full event chain
    */
   async clickElement(selector, coordinates) {
     let el = this.resolveElement(selector);
@@ -119,12 +120,12 @@ class ActionExecutor {
 
     // Scroll into view smoothly
     el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    await new Promise((r) => setTimeout(r, 200));
+    await new Promise((r) => setTimeout(r, 150));
 
     // Show visual indicator
     this.highlightElement(el, 'CLICK');
 
-    // Dispatch synthetic mouse sequence
+    // Dispatch full event sequence
     const rect = el.getBoundingClientRect();
     const cx = rect.left + rect.width / 2;
     const cy = rect.top + rect.height / 2;
@@ -134,19 +135,63 @@ class ActionExecutor {
       cancelable: true,
       view: window,
       clientX: cx,
-      clientY: cy
+      clientY: cy,
+      pointerId: 1,
+      pointerType: 'mouse',
+      isPrimary: true,
+      button: 0,
+      buttons: 1
     };
+
+    // Strategy 1: Full event chain (hover -> pointerover -> mouseover -> pointerdown -> mousedown -> focus -> pointerup -> mouseup -> click)
+    el.dispatchEvent(new PointerEvent('pointerover', { ...eventOpts, buttons: 0 }));
+    el.dispatchEvent(new MouseEvent('mouseover', { ...eventOpts, buttons: 0 }));
+    el.dispatchEvent(new PointerEvent('pointerenter', { ...eventOpts, buttons: 0 }));
+    el.dispatchEvent(new MouseEvent('mouseenter', { ...eventOpts, buttons: 0 }));
 
     el.dispatchEvent(new PointerEvent('pointerdown', eventOpts));
     el.dispatchEvent(new MouseEvent('mousedown', eventOpts));
-    el.focus();
-    el.dispatchEvent(new PointerEvent('pointerup', eventOpts));
-    el.dispatchEvent(new MouseEvent('mouseup', eventOpts));
-    el.click();
+
+    try { el.focus(); } catch (e) {}
+
+    el.dispatchEvent(new PointerEvent('pointerup', { ...eventOpts, buttons: 0 }));
+    el.dispatchEvent(new MouseEvent('mouseup', { ...eventOpts, buttons: 0 }));
+
+    try {
+      el.click();
+    } catch (e) {
+      console.warn('el.click() caught:', e);
+    }
+    el.dispatchEvent(new MouseEvent('click', { ...eventOpts, buttons: 0 }));
+
+    // Strategy 2: Hit-testing coordinate fallback if inner wrapper intercepted
+    if (cx > 0 && cy > 0) {
+      try {
+        const topTarget = document.elementFromPoint(cx, cy);
+        if (topTarget && topTarget !== el && el.contains(topTarget)) {
+          topTarget.dispatchEvent(new MouseEvent('click', { ...eventOpts, buttons: 0 }));
+        }
+      } catch (e) {}
+    }
+
+    // Strategy 3: Form submission fallback if submit/login button
+    const isSubmit = el.type === 'submit' || /submit|login|sign[\s_-]?in/i.test((el.innerText || el.value || ''));
+    if (isSubmit) {
+      const parentForm = el.form || el.closest('form');
+      if (parentForm) {
+        setTimeout(() => {
+          try {
+            if (typeof parentForm.requestSubmit === 'function') {
+              parentForm.requestSubmit(el);
+            }
+          } catch (e) {}
+        }, 200);
+      }
+    }
 
     return {
       success: true,
-      message: `Clicked element: ${selector || el.tagName.toLowerCase()}`
+      message: `Clicked element via multi-strategy chain: ${selector || el.tagName.toLowerCase()}`
     };
   }
 

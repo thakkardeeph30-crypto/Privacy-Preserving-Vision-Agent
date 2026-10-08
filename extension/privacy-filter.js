@@ -29,7 +29,43 @@ class PrivacyFilter {
     };
   }
 
-  // --- 1. Luhn Check for Validating Credit Cards ---
+  // --- 1. BIN + Format + Luhn Validation for Credit Cards (Fix #6) ---
+  validateCreditCardBIN(cleanDigits) {
+    if (!cleanDigits || typeof cleanDigits !== 'string') return null;
+    const len = cleanDigits.length;
+    if (len < 13 || len > 19) return null;
+
+    // Visa: starts with 4, len 13, 16, 19
+    if (/^4/.test(cleanDigits) && (len === 13 || len === 16 || len === 19)) return { issuer: 'Visa', valid: true };
+
+    // MasterCard: starts with 51-55 or 2221-2720, len 16
+    if ((/^(?:5[1-5][0-9]{2}|222[1-9]|22[3-9][0-9]|2[3-6][0-9]{2}|27[01][0-9]|2720)/.test(cleanDigits)) && len === 16) {
+      return { issuer: 'MasterCard', valid: true };
+    }
+
+    // American Express: starts with 34 or 37, len 15
+    if (/^3[47]/.test(cleanDigits) && len === 15) return { issuer: 'Amex', valid: true };
+
+    // Discover: starts with 6011, 622126-622925, 644-649, 65, len 16, 19
+    if (/^6(?:011|5[0-9]{2}|4[4-9][0-9]|22(?:1(?:2[6-9]|[3-9][0-9])|[2-8][0-9]{2}|9(?:[01][0-9]|2[0-5])))/.test(cleanDigits) && (len === 16 || len === 19)) {
+      return { issuer: 'Discover', valid: true };
+    }
+
+    // Diners Club: starts with 300-305, 36, 38, len 14-16
+    if (/^3(?:0[0-5]|[68][0-9])/.test(cleanDigits) && len >= 14 && len <= 16) return { issuer: 'DinersClub', valid: true };
+
+    // JCB: starts with 3528-3589, len 16
+    if (/^35(?:2[89]|[3-8][0-9])/.test(cleanDigits) && len === 16) return { issuer: 'JCB', valid: true };
+
+    // Maestro: starts with 5018, 5020, 5038, 5893, 6304, 6759, 6761, 6762, 6763, len 12-19
+    if (/^(?:5[0678]\d\d|6304|6390|67\d\d)/.test(cleanDigits) && len >= 12 && len <= 19) return { issuer: 'Maestro', valid: true };
+
+    // RuPay: starts with 60, 6521, 6522, 353, 356, len 16
+    if (/^(?:60|6521|6522|353|356)/.test(cleanDigits) && len === 16) return { issuer: 'RuPay', valid: true };
+
+    return null;
+  }
+
   luhnCheck(val) {
     const clean = String(val).replace(/[\s-]/g, '');
     if (!/^\d{13,19}$/.test(clean)) return false;
@@ -45,6 +81,20 @@ class PrivacyFilter {
       shouldDouble = !shouldDouble;
     }
     return sum % 10 === 0;
+  }
+
+  isCreditCard(val) {
+    const clean = String(val).replace(/[\s-]/g, '');
+    if (!/^\d{13,19}$/.test(clean)) return false;
+
+    // 1. BIN prefix check (eliminates random serials, UUIDs, barcodes)
+    const binMatch = this.validateCreditCardBIN(clean);
+    if (!binMatch) return false;
+
+    // 2. Luhn checksum algorithm
+    if (!this.luhnCheck(clean)) return false;
+
+    return binMatch;
   }
 
   // --- 2. PII Detection in Text ---
@@ -87,9 +137,11 @@ class PrivacyFilter {
     let match;
     while ((match = re.exec(text)) !== null) {
       const candidate = match[0];
-      if (this.luhnCheck(candidate)) {
+      const cardInfo = this.isCreditCard(candidate);
+      if (cardInfo) {
         matches.push({
           type: 'creditcard',
+          issuer: cardInfo.issuer,
           raw: candidate,
           masked: this.maskCreditCard(candidate),
           index: match.index
@@ -227,22 +279,24 @@ class PrivacyFilter {
    * @param {Array} detections - List of { type, method, box: { x, y, width, height } }
    * @returns {Promise<{ sanitizedBase64: string, redactedCount: number, detectedTypes: string[] }>}
    */
-  async redactImage(imageSource, detections = []) {
+  async redactImage(imageSource, detections = [], options = {}) {
     return new Promise((resolve, reject) => {
       const img = new Image();
       img.crossOrigin = 'anonymous';
 
       img.onload = () => {
         try {
+          const origW = img.width;
+          const origH = img.height;
+
+          // 1. Initial canvas for pixel-perfect redactions
           const canvas = typeof OffscreenCanvas !== 'undefined'
-            ? new OffscreenCanvas(img.width, img.height)
+            ? new OffscreenCanvas(origW, origH)
             : document.createElement('canvas');
 
-          canvas.width = img.width;
-          canvas.height = img.height;
+          canvas.width = origW;
+          canvas.height = origH;
           const ctx = canvas.getContext('2d');
-
-          // Draw pristine screenshot
           ctx.drawImage(img, 0, 0);
 
           let redactedCount = 0;
@@ -273,27 +327,69 @@ class PrivacyFilter {
             }
           }
 
-          // Convert to base64
-          if (canvas.convertToBlob) {
-            canvas.convertToBlob({ type: 'image/png' }).then((blob) => {
-              const reader = new FileReader();
-              reader.onloadend = () => {
-                resolve({
-                  sanitizedBase64: reader.result,
-                  redactedCount,
-                  detectedTypes: Array.from(detectedTypes)
-                });
-              };
-              reader.onerror = reject;
-              reader.readAsDataURL(blob);
-            }).catch(reject);
-          } else {
-            const dataUrl = canvas.toDataURL('image/png');
+          // 2. Downscale + Optional Crop (Fix #9: High latency fix)
+          const maxDim = options.maxDimension || 1280;
+          let srcX = 0;
+          let srcY = 0;
+          let srcW = canvas.width;
+          let srcH = canvas.height;
+
+          if (options.crop && options.crop.width > 0 && options.crop.height > 0) {
+            srcX = Math.max(0, options.crop.x || 0);
+            srcY = Math.max(0, options.crop.y || 0);
+            srcW = Math.min(options.crop.width, canvas.width - srcX);
+            srcH = Math.min(options.crop.height, canvas.height - srcY);
+          }
+
+          let destW = srcW;
+          let destH = srcH;
+          if (destW > maxDim || destH > maxDim) {
+            const ratio = Math.min(maxDim / destW, maxDim / destH);
+            destW = Math.round(destW * ratio);
+            destH = Math.round(destH * ratio);
+          }
+
+          const outCanvas = typeof OffscreenCanvas !== 'undefined'
+            ? new OffscreenCanvas(destW, destH)
+            : document.createElement('canvas');
+          outCanvas.width = destW;
+          outCanvas.height = destH;
+          const outCtx = outCanvas.getContext('2d');
+          outCtx.drawImage(canvas, srcX, srcY, srcW, srcH, 0, 0, destW, destH);
+
+          // 3. Export to WebP (Fix #9) with quality 0.82
+          const format = options.format || 'image/webp';
+          const quality = options.quality !== undefined ? options.quality : 0.82;
+
+          const finishExport = (dataUrl, byteSize) => {
             resolve({
               sanitizedBase64: dataUrl,
               redactedCount,
-              detectedTypes: Array.from(detectedTypes)
+              detectedTypes: Array.from(detectedTypes),
+              byteSize: byteSize || Math.round(dataUrl.length * 0.75),
+              dimensions: { width: destW, height: destH },
+              format: format.replace('image/', '')
             });
+          };
+
+          if (outCanvas.convertToBlob) {
+            outCanvas.convertToBlob({ type: format, quality })
+              .catch(() => outCanvas.convertToBlob({ type: 'image/jpeg', quality }))
+              .catch(() => outCanvas.convertToBlob({ type: 'image/png' }))
+              .then((blob) => {
+                const reader = new FileReader();
+                reader.onloadend = () => finishExport(reader.result, blob.size);
+                reader.onerror = reject;
+                reader.readAsDataURL(blob);
+              }).catch(reject);
+          } else {
+            let dataUrl;
+            try {
+              dataUrl = outCanvas.toDataURL(format, quality);
+            } catch (e) {
+              dataUrl = outCanvas.toDataURL('image/png');
+            }
+            finishExport(dataUrl);
           }
         } catch (err) {
           reject(err);
@@ -437,7 +533,7 @@ class PrivacyFilter {
 
       if (this.options.maskCreditCards) {
         text = text.replace(this.patterns.creditCard, (match) => {
-          if (this.luhnCheck(match)) {
+          if (this.isCreditCard(match)) {
             maskedCount++;
             return this.maskCreditCard(match);
           }

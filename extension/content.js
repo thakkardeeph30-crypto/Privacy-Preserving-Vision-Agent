@@ -6,6 +6,9 @@
  */
 
 (() => {
+  // Fix 1: Scope to top-level DOM to avoid cross-origin iframe security errors and multi-frame race conditions
+  if (window !== window.top) return;
+
   // Prevent double injection
   if (window.__privacyScreenAgentLoaded) return;
   window.__privacyScreenAgentLoaded = true;
@@ -94,6 +97,7 @@
         case 'COLLECT_PAGE_CONTEXT': {
           const sensitivities = privacyFilter ? privacyFilter.detectDOMSensitivities(document) : [];
           const interactiveElements = getInteractiveElements();
+          const canvasInfo = detectCanvasApps(document);
           sendResponse({
             url: window.location.href,
             title: document.title,
@@ -105,8 +109,24 @@
               scrollY: window.scrollY
             },
             sensitivities,
-            interactiveElements
+            interactiveElements,
+            isCanvasApp: canvasInfo.isCanvasApp,
+            canvasCount: canvasInfo.canvasCount
           });
+          break;
+        }
+
+        case 'PRE_CAPTURE_DOM_REDACT': {
+          // Fix 10: Mask DOM PII elements *before* screenshot capture so ViT / server never sees raw PII
+          const preResult = applyPreCaptureDOMRedaction();
+          sendResponse({ success: true, count: preResult.count });
+          break;
+        }
+
+        case 'REMOVE_PRE_CAPTURE_DOM_REDACT': {
+          // Fix 10: Seamlessly unmask DOM immediately after screen capture is acquired
+          const cleanResult = removePreCaptureDOMRedaction();
+          sendResponse({ success: true, ...cleanResult });
           break;
         }
 
@@ -163,6 +183,122 @@
     } catch (err) {
       sendResponse({ success: false, error: err.message });
     }
+  // --- Canvas Apps Detection (Fix 5: Handle canvas-rendered apps) ---
+  function detectCanvasApps(doc = document) {
+    try {
+      const canvases = Array.from(doc.querySelectorAll('canvas'));
+      const vw = window.innerWidth || 1000;
+      const vh = window.innerHeight || 800;
+      const isCanvasApp = canvases.some((c) => {
+        const rect = c.getBoundingClientRect();
+        return (rect.width * rect.height) >= (vw * vh * 0.25);
+      });
+      return { isCanvasApp, canvasCount: canvases.length };
+    } catch (e) {
+      return { isCanvasApp: false, canvasCount: 0 };
+    }
+  }
+
+  // --- Pre-Capture DOM Redaction (Fix 10: ViT sees raw PII -> DOM redaction before capture) ---
+  let preCaptureMaskElements = [];
+
+  function applyPreCaptureDOMRedaction() {
+    if (preCaptureMaskElements.length > 0) {
+      removePreCaptureDOMRedaction();
+    }
+
+    const maskedList = [];
+    const inputs = getAllDocumentInputs(document);
+    const detectedSensitivities = privacyFilter ? privacyFilter.detectDOMSensitivities(document) : [];
+
+    // 1. Mask password, PIN, and credential inputs
+    inputs.forEach((input) => {
+      const type = (input.type || '').toLowerCase();
+      const meta = `${input.name || ''} ${input.id || ''} ${input.autocomplete || ''}`.toLowerCase();
+      if (type === 'password' || /password|pwd|pin|secret|cvv|cvc|token|auth/i.test(meta)) {
+        applyMaskToElement(input, 'PASSWORD', maskedList);
+      }
+    });
+
+    // 2. Mask detected DOM sensitivities (credit cards, emails, phones, SSNs)
+    detectedSensitivities.forEach((sens) => {
+      if (sens.box) {
+        createVisualBlackoutPill(sens.box, sens.type.toUpperCase(), maskedList);
+      }
+    });
+
+    // 3. Scan visible input values for credit cards (BIN+Luhn), emails, and phones
+    inputs.forEach((input) => {
+      const val = input.value;
+      if (val && typeof val === 'string' && privacyFilter) {
+        if (privacyFilter.isCreditCard && privacyFilter.isCreditCard(val)) {
+          applyMaskToElement(input, 'CREDIT_CARD', maskedList);
+        } else if (privacyFilter.detectEmailPatterns && privacyFilter.detectEmailPatterns(val).length > 0) {
+          applyMaskToElement(input, 'EMAIL', maskedList);
+        } else if (privacyFilter.detectPhoneNumbers && privacyFilter.detectPhoneNumbers(val).length > 0) {
+          applyMaskToElement(input, 'PHONE', maskedList);
+        }
+      }
+    });
+
+    return { success: true, count: maskedList.length };
+  }
+
+  function applyMaskToElement(el, label, maskedList) {
+    if (!el || !el.isConnected) return;
+    const rect = el.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return;
+    createVisualBlackoutPill(rect, label, maskedList);
+  }
+
+  function createVisualBlackoutPill(rect, label, maskedList) {
+    try {
+      const pill = document.createElement('div');
+      pill.className = 'privacy-agent-pre-capture-mask';
+      pill.style.cssText = `
+        position: fixed !important;
+        top: ${rect.top}px !important;
+        left: ${rect.left}px !important;
+        width: ${rect.width}px !important;
+        height: ${rect.height}px !important;
+        background: #0f172a !important;
+        color: #38bdf8 !important;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+        font-size: 11px !important;
+        font-weight: 700 !important;
+        letter-spacing: 0.5px !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        z-index: 2147483647 !important;
+        pointer-events: none !important;
+        border-radius: 4px !important;
+        box-shadow: 0 0 12px rgba(0, 0, 0, 0.8) !important;
+        border: 1px solid rgba(56, 189, 248, 0.6) !important;
+        backdrop-filter: blur(12px) !important;
+      `;
+      pill.textContent = `🛡️ [REDACTED ${label}]`;
+      document.documentElement.appendChild(pill);
+      preCaptureMaskElements.push(pill);
+      maskedList.push({ label, box: { x: rect.left, y: rect.top, width: rect.width, height: rect.height } });
+    } catch (e) {
+      console.warn('Mask creation warning:', e);
+    }
+  }
+
+  function removePreCaptureDOMRedaction() {
+    if (preCaptureMaskElements && preCaptureMaskElements.length > 0) {
+      preCaptureMaskElements.forEach((el) => {
+        try { el.remove(); } catch (e) {}
+      });
+      preCaptureMaskElements = [];
+    }
+    try {
+      document.querySelectorAll('.privacy-agent-pre-capture-mask').forEach((el) => {
+        try { el.remove(); } catch (e) {}
+      });
+    } catch (e) {}
+    return { success: true };
   }
 
   // --- Robust DOM & Visibility Utilities ---
